@@ -1,0 +1,265 @@
+# Enterprise RAG system configuration file
+# Lightweight deployment for 8G RAM CPU environments
+#
+# Sensitive / environment-specific values (API keys, service URLs, model names)
+# are managed via environment variables in .env (see .env.example).
+# Env vars take priority over the values declared here.
+# This file holds structural defaults and non-sensitive settings only.
+
+# System configuration
+system:
+  app_name: "whiteBoxRAG"
+  version: "1.0.0"
+  debug: false
+  host: "0.0.0.0"
+  port: 8080
+  max_workers: 4
+
+# LLM provider configuration
+# Env var override: LLM_PROVIDER (ollama | openai)
+llm:
+  provider: "ollama"
+
+# Business scope boundary detection configuration
+boundary:
+  enabled: true
+  # Confidence threshold for boundary detection
+  confidence_threshold: 0.5
+  # Semantic similarity threshold for boundary detection
+  semantic_threshold: 0.3
+  # Whitelist keywords (hit to consider as business scope)
+  whitelist_keywords:
+    - "Order"
+    - "After-Sales Service"
+    - "Product"
+    - "Account"
+    - "Technical"
+    - "Financial"
+    - "Logistics"
+    - "Consultation"
+  # Blacklist keywords (hit to reject answer)
+  blacklist_keywords:
+    - "非法"
+    - "违法"
+    - "色情"
+    - "暴力"
+    - "赌博"
+    - "毒品"
+  #   Business topics list (used for semantic boundary detection)
+  business_topics:
+    - "Product Usage and Operation Guide"
+    - "After-Sales Service Process and Policy"
+    - "Order Management and Payment Settlement"
+    - "Account Registration and Login Issues"
+    - "Technical Support and API Development"
+    - "Financial and Invoice Management"
+    - "Logistics and Delivery Management"
+  # OOD rejection message template
+  rejection_message: "Sorry, your question is out of business scope. Please consult the business department or try asking related business questions."
+
+# Circuit breaker configuration
+circuit_breaker:
+  # Failure threshold for circuit breaker (exceed this value to trigger circuit breaker, unit: %)
+  failure_threshold: 50
+  # Success threshold for half breaker (continuous success count to normal)
+  success_threshold: 5
+  # Timeout for breaker (wait seconds before half breaker)
+  timeout_seconds: 60
+  # Delay threshold for circuit breaker (exceed this delay to fail, unit: milliseconds)
+  delay_threshold_ms: 30000
+
+# Ollama local model configuration
+# Env var overrides: OLLAMA_BASE_URL, OLLAMA_LLM_MODEL, OLLAMA_EMBEDDING_MODEL,
+#                    OLLAMA_EMBEDDING_DIM, OLLAMA_TIMEOUT, OLLAMA_MAX_RETRIES
+ollama:
+  llm_model: "qwen2.5:7b"
+  llm_base_url: "http://localhost:11434"
+  embedding_model: "nomic-embed-text:latest"
+  embedding_dim: 768
+  timeout: 60
+  max_retries: 3
+
+# OpenAI configuration (enable when LLM_PROVIDER=openai)
+# Env var overrides: OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_LLM_MODEL,
+#                    OPENAI_EMBEDDING_MODEL, OPENAI_EMBEDDING_DIM, OPENAI_TIMEOUT
+# IMPORTANT: never store the API key here — use the OPENAI_API_KEY env var in .env
+openai:
+  api_key: ""
+  base_url: "https://api.openai.com/v1"
+  llm_model: "gpt-4o"
+  embedding_model: "text-embedding-3-small"
+  embedding_dim: 1536
+  timeout: 60
+
+# ChromaDB vector store configuration
+vector_store:
+  # Persistent storage directory
+  persist_directory: "./storage/vectordb"
+  # Collection prefix
+  collection_prefix: "kb_"
+  # Vector retrieval top-k
+  top_k: 5
+  # Similarity threshold for vector retrieval (below this value not returned)
+  similarity_threshold: 0.1
+
+# BM25 configuration
+bm25:
+  # BM25 retrieval top-k
+  top_k: 5
+  # Tokenizer (jieba/whitespace)
+  tokenizer: "jieba"
+
+# Document parser configuration
+document_parser:
+  # Supported file formats
+  supported_formats:
+    - ".pdf"
+    - ".docx"
+    - ".doc"
+    - ".txt"
+    - ".xlsx"
+    - ".xls"
+    - ".pptx"
+  # Maximum file size (MB)
+  max_file_size: 50
+  # Text chunk size
+  chunk_size: 512
+  # Chunk overlap size
+  chunk_overlap: 50
+  # Batch workers
+  batch_workers: 2
+
+# Hybrid retriever configuration
+retriever:
+  # Retrieval mode (vector/bm25/hybrid)
+  mode: "hybrid"
+  # Hybrid BM25 weight (BM25 weight, vector weight = 1 - this value)
+  bm25_weight: 0.4
+  # Rerank top-k
+  rerank_top_k: 10
+  # Context compression configuration
+  compression:
+    enabled: true
+    # Maximum tokens after compression
+    max_tokens: 2048
+  # Empty response for no relevant information found
+  empty_response: "Sorry, I couldn't find any relevant information in the knowledge base. Please try your question description or upload related documents."
+
+# Async tasks configuration
+async_tasks:
+  # Task storage directory
+  task_directory: "./storage/tasks"
+  # Task timeout (seconds)
+  timeout: 300
+  # Task cleanup interval (seconds)
+  cleanup_interval: 3600
+
+# Logging configuration
+logging:
+  # Log level (DEBUG/INFO/WARNING/ERROR)
+  level: "INFO"
+  # Log storage directory
+  directory: "./storage/logs"
+  # Maximum log file size (MB)
+  max_file_size: 10
+  # Log retention days
+  retention_days: 30
+  # Log format (classic-style)
+  format: "%(asctime)s - [%(tag)s] - %(levelname)s - %(message)s"
+
+# Monitoring configuration
+monitoring:
+  # Whether to enable performance monitoring
+  enabled: true
+  # Monitoring data retention hours
+  retention_hours: 24
+  # Monitoring data storage path
+  data_path: "./storage/monitor"
+
+# Knowledge base configuration
+knowledge_base:
+  # Knowledge base storage directory
+  document_directory: "./storage/documents"
+  # Knowledge base metadata file path
+  metadata_file: "./storage/kb_metadata.json"
+  # Maximum knowledge bases
+  max_knowledge_bases: 10
+
+# API configuration
+# Env var overrides: API_KEY, API_RATE_LIMIT
+api:
+  cors_enabled: true
+  # "*" allows every origin. Restrict this to your own front-end hosts in production.
+  cors_origins:
+    - "*"
+  # RESERVED: mapped from the API_KEY env var, but the REST API does not verify it yet, so
+  # setting a value changes nothing. This service has no built-in authentication: bind it to
+  # 127.0.0.1 or put it behind an authenticating reverse proxy (see README "Security").
+  # Never store real secrets in this file.
+  api_key: ""
+  rate_limit: 60
+
+# 问答溯源配置
+trace:
+  # Whether to enable trace records
+  enabled: true
+  # Trace data storage directory
+  trace_directory: "./storage/traces"
+  # Maximum trace records per query
+  max_trace_records: 1000
+
+# Recall diagnostic configuration
+recall_diagnostic:
+  # Whether to enable recall diagnostic
+  enabled: true
+  # Full scan maximum document count (to avoid performance issues)
+  full_scan_limit: 500
+
+# Rule engine configuration
+rule_engine:
+  # Rule file path
+  rule_file: "./storage/rules.json"
+  # Feedback file path
+  feedback_file: "./storage/feedbacks.json"
+  # Minimum feedback count required to generate rule suggestions
+  min_feedback_count: 3
+  # Maximum application logs per query
+  max_logs: 1000
+  # Memory buffer flush interval (seconds)
+  flush_interval: 10
+  # Memory buffer flush threshold (cumulative change count, flush when reached)
+  flush_threshold: 50
+
+# Document analyzer configuration
+document_analyzer:
+  # Trace directory
+  trace_dir: "./storage/traces"
+  # Document directory
+  doc_dir: "./storage/documents"
+  # Output directory
+  output_dir: "./storage/optimized_docs"
+  # Minimum keyword length
+  min_keyword_length: 2
+  # Maximum top keywords count
+  max_top_keywords: 20
+  # Maximum ineffective examples count
+  max_ineffective_examples: 5
+  # Minimum document length (characters)
+  min_doc_length: 100
+  # Maximum document length (characters)
+  max_doc_length: 5000
+  # Minimum Chinese character ratio
+  min_chinese_ratio: 50
+  # Whether to use LLM for QA pairs
+  use_llm_for_qa: false
+
+# Scheduler configuration
+scheduler:
+  # Whether to enable scheduled tasks
+  enabled: false
+  # Document optimization task
+  document_optimization_enabled: false
+  document_optimization_cron: "0 2 * * *"
+  # Daily analysis task
+  daily_analysis_enabled: false
+  daily_analysis_cron: "0 8 * * *"

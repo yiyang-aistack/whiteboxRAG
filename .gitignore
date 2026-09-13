@@ -1,0 +1,114 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Storage - keep directory structure but ignore data files
+storage/vectordb/*
+!storage/vectordb/.gitkeep
+storage/documents/*
+!storage/documents/.gitkeep
+storage/logs/*
+!storage/logs/.gitkeep
+storage/tasks/*
+!storage/tasks/.gitkeep
+storage/monitor/*
+!storage/monitor/.gitkeep
+storage/traces/*
+!storage/traces/.gitkeep
+storage/optimized_docs/*
+!storage/optimized_docs/.gitkeep
+storage/evaluation/*
+!storage/evaluation/.gitkeep
+# Legacy ChromaDB persist directory (the current default is ./storage/vectordb, see settings.yaml).
+# Kept explicit so stale data from older builds can never be committed either.
+storage/chroma_db/*
+!storage/chroma_db/.gitkeep
+storage/*.json
+!storage/.gitkeep
+# NOTE: for every new runtime directory add a "storage/<dir>/*" + "!storage/<dir>/.gitkeep"
+# pair. A blanket "storage/**" would also exclude the directories themselves, and git cannot
+# re-include a file whose parent directory is excluded.
+
+# Environment
+.env
+.env.local
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary
+*.tmp
+*.bak
+
+# Model files
+*.gguf
+*.bin
+*.safetensors
+*.pth
+*.pt
+*.h5
+*.onnx
+*.ckpt
+
+# Data directories
+data/
+datasets/
+
+# Editor backup
+*.orig
+*.rej
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+
+# PyCharm
+.idea/
+
+# Application specific
+config/local_config.yaml
+config/secrets.yaml

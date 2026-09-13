@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="admin.title">whiteBoxRAG - 知识库管理后台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <script src="/static/i18n.js"></script>
+    <script>
+        // 尽早应用主题，避免刷新时闪白
+        (function () {
+            var t = localStorage.getItem('theme') || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            if (t === 'dark') document.documentElement.classList.add('dark');
+            window.__theme = t;
+        })();
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .sidebar-transition {
+            transition: transform 0.3s ease-in-out, width 0.3s ease-in-out;
+        }
+
+        .kb-card.active {
+            border-color: #3b82f6;
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .code-preview {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .loading-dots::after {
+            content: '';
+            animation: dots 1.5s steps(4) infinite;
+        }
+
+        @keyframes dots {
+            0% { content: ''; }
+            25% { content: '.'; }
+            50% { content: '..'; }
+            75% { content: '...'; }
+        }
+
+        /* ===== 浅色/深色主题覆盖 ===== */
+        html { color-scheme: light dark; }
+        .dark { color-scheme: dark; }
+        .dark body { background-color: #0f172a; }
+        .dark ::-webkit-scrollbar-track { background: #1e293b; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .dark .bg-slate-100 { background-color: #0f172a !important; }
+        .dark .bg-slate-50 { background-color: #1e293b !important; }
+        .dark .bg-white { background-color: #1e293b !important; }
+        .dark .bg-slate-200 { background-color: #334155 !important; }
+        .dark .text-slate-800, .dark .text-slate-700 { color: #e2e8f0 !important; }
+        .dark .text-slate-600 { color: #cbd5e1 !important; }
+        .dark .text-slate-500 { color: #94a3b8 !important; }
+        .dark .text-slate-400 { color: #64748b !important; }
+        .dark .text-slate-300 { color: #475569 !important; }
+        .dark .border-slate-200 { border-color: #334155 !important; }
+        .dark .border-slate-100 { border-color: #1e293b !important; }
+        .dark .border-slate-300 { border-color: #475569 !important; }
+        .dark input, .dark textarea, .dark select {
+            background-color: #0f172a !important; color: #e2e8f0 !important; border-color: #475569 !important;
+        }
+        .dark input::placeholder, .dark textarea::placeholder { color: #64748b !important; }
+        .dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+        .dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+        .dark .hover\:text-blue-600:hover { color: #60a5fa !important; }
+        .dark .hover\:bg-blue-50:hover { background-color: rgba(30,58,138,0.4) !important; }
+        .dark .bg-blue-50 { background-color: rgba(30,58,138,0.35) !important; }
+        .dark .bg-green-50, .dark .bg-emerald-50 { background-color: rgba(20,83,45,0.35) !important; }
+        .dark .bg-red-50 { background-color: rgba(127,29,29,0.4) !important; }
+        .dark .bg-yellow-50, .dark .bg-amber-50 { background-color: rgba(113,63,18,0.4) !important; }
+        .dark .bg-purple-50 { background-color: rgba(76,29,149,0.35) !important; }
+        .dark .bg-black\/40, .dark .bg-black\/50 { background-color: rgba(0,0,0,0.65) !important; }
+        .dark .kb-card.active { background: linear-gradient(135deg, rgba(30,58,138,0.4) 0%, rgba(29,78,216,0.25) 100%) !important; border-color: #3b82f6 !important; }
+        .dark .code-preview { background-color: #0f172a !important; color: #cbd5e1 !important; }
+    </style>
+</head>
+<body class="bg-slate-100 h-screen overflow-hidden font-sans">
+
+    <div class="flex h-screen">
+        <aside id="sidebar" class="w-72 bg-white border-r border-slate-200 flex flex-col sidebar-transition">
+            <div class="p-4 border-b border-slate-200 bg-gradient-to-r from-blue-600 to-blue-700">
+                <div class="flex items-center space-x-2">
+                    <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+                    </svg>
+                    <div>
+                        <h1 class="text-white font-bold text-lg">whiteBoxRAG</h1>
+                        <p class="text-blue-200 text-xs" data-i18n="admin.kb_subtitle">知识库管理后台</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-3">
+                <button onclick="createKB()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    <span data-i18n="admin.create_kb">新建知识库</span>
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-3">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2" data-i18n="kb.list">知识库列表</h3>
+                <div id="kbList" class="space-y-2">
+                    <div class="text-center text-slate-400 py-8" data-i18n="common.loading">加载中...</div>
+                </div>
+            </div>
+
+            <div class="p-3 border-t border-slate-200">
+                <div class="text-xs text-slate-500">
+                    <p data-i18n="admin.system_status">System Status</p>
+                    <p class="text-green-500 mt-1" data-i18n="admin.system_running">🟢 运行正常</p>
+                </div>
+            </div>
+        </aside>
+
+        <div class="flex-1 flex flex-col overflow-hidden">
+            <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+                <div>
+                    <h2 id="kbTitle" class="text-xl font-semibold text-slate-800" data-i18n="kb.select_placeholder">选择知识库</h2>
+                    <p id="kbSubtitle" class="text-sm text-slate-500" data-i18n="admin.kb_subtitle">查看知识库详情、文档和向量数据</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <span id="kbStats" class="text-sm text-slate-500"></span>
+                    <button id="themeToggle" onclick="toggleTheme()" data-i18n-title="common.theme_toggle" title="切换浅色/深色主题" class="text-slate-500 hover:bg-slate-100 rounded p-2 transition-colors">
+                        <svg class="w-5 h-5 theme-icon-moon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                        <svg class="w-5 h-5 theme-icon-sun hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                    </button>
+                    <button id="langToggle" onclick="i18n.toggleLang()" title="Switch language" class="text-slate-500 hover:bg-slate-100 rounded p-2 transition-colors text-sm font-medium">EN</button>
+                    <button onclick="refreshKB()" class="text-slate-500 hover:text-blue-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <nav class="bg-white border-b border-slate-200 px-6">
+                <div class="flex space-x-1">
+                    <button onclick="switchTab('files')" id="tab-files" class="tab-btn px-4 py-3 text-sm font-medium text-blue-600 border-b-2 border-blue-600">📄 <span data-i18n="admin.tab_files">文件管理</span></button>
+                    <button onclick="switchTab('chunks')" id="tab-chunks" class="tab-btn px-4 py-3 text-sm font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50">🧩 <span data-i18n="admin.tab_chunks">文档分块</span></button>
+                    <button onclick="switchTab('vectors')" id="tab-vectors" class="tab-btn px-4 py-3 text-sm font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50">📊 <span data-i18n="admin.tab_vectors">向量数据</span></button>
+                </div>
+            </nav>
+
+            <main class="flex-1 overflow-y-auto p-6">
+                <div id="tab-files-content" class="tab-content active">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="font-semibold text-slate-700" data-i18n="admin.raw_docs">原始文档列表</h3>
+                            <button onclick="uploadFile()" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center space-x-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                </svg>
+                                <span data-i18n="admin.upload">上传文档</span>
+                            </button>
+                        </div>
+
+                        <div id="fileList" class="space-y-3">
+                            <div class="text-center text-slate-400 py-12" data-i18n="chat.no_kb">请先选择知识库</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-chunks-content" class="tab-content">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="font-semibold text-slate-700" data-i18n="admin.chunk_list">文档分块列表</h3>
+                            <div class="flex items-center space-x-3">
+                                <span id="chunkCount" class="text-sm text-slate-500"></span>
+                                <div class="flex items-center space-x-2">
+                                    <input type="number" id="chunkLimit" value="20" min="1" max="100" class="w-20 px-2 py-1 border border-slate-300 rounded text-sm">
+                                    <button onclick="loadChunks()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700" data-i18n="common.refresh">刷新</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="chunkList" class="space-y-4">
+                            <div class="text-center text-slate-400 py-12" data-i18n="chat.no_kb">请先选择知识库</div>
+                        </div>
+
+                        <div id="chunkPagination" class="flex items-center justify-center space-x-2 mt-6">
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-vectors-content" class="tab-content">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="font-semibold text-slate-700" data-i18n="admin.vector_details">向量数据详情</h3>
+                            <span id="vectorStats" class="text-sm text-slate-500"></span>
+                        </div>
+
+                        <div id="vectorContent" class="space-y-4">
+                            <div class="text-center text-slate-400 py-12" data-i18n="admin.no_vector">选择一个分块查看向量详情</div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div id="rawDocModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-[90%] max-w-4xl max-h-[80vh] flex flex-col">
+            <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                <h3 id="rawDocTitle" class="font-semibold text-slate-700" data-i18n="admin.raw_doc_content">原始文档内容</h3>
+                <button onclick="closeRawDocModal()" class="text-slate-400 hover:text-slate-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-4 border-b border-slate-200 text-sm text-slate-500">
+                <span id="rawDocMeta"></span>
+            </div>
+            <div class="flex-1 overflow-auto p-4">
+                <pre id="rawDocContent" class="code-preview text-slate-700 whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+    </div>
+
+    <div id="createKBModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-[400px] p-6">
+            <h3 class="font-semibold text-slate-700 mb-4" data-i18n="admin.create_kb">新建知识库</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-1" data-i18n="admin.kb_name">知识库名称</label>
+                    <input type="text" id="newKBName" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-1" data-i18n="kb.desc">描述</label>
+                    <textarea id="newKBDesc" rows="2" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-3 mt-6">
+                <button onclick="closeCreateKBModal()" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg" data-i18n="common.cancel">取消</button>
+                <button onclick="submitCreateKB()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" data-i18n="common.create">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="uploadModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-[400px] p-6">
+            <h3 class="font-semibold text-slate-700 mb-4" data-i18n="admin.upload">上传文档</h3>
+            <div class="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors">
+                <svg class="w-12 h-12 text-slate-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <p class="text-sm text-slate-500" data-i18n="admin.upload_area">点击或拖拽文件到此处上传</p>
+                <input type="file" id="uploadFileInput" class="hidden" accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt">
+            </div>
+            <div class="flex justify-end space-x-3 mt-6">
+                <button onclick="closeUploadModal()" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg" data-i18n="common.cancel">取消</button>
+                <button onclick="submitUpload()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" data-i18n="common.upload">上传</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const t = i18n.t;
+        const state = {
+            currentKB: null,
+            kbList: [],
+            fileList: [],
+            chunks: [],
+            chunkOffset: 0,
+            chunkLimit: 20,
+            chunkTotal: 0,
+            selectedChunk: null
+        };
+
+        async function loadKBList() {
+            try {
+                const response = await fetch('/api/knowledge/list');
+                const data = await response.json();
+                state.kbList = data.data || [];
+                renderKBList();
+            } catch (error) {
+                console.error('加载知识库列表失败:', error);
+                document.getElementById('kbList').innerHTML = `<div class="text-center text-red-500 py-8">${t('common.failed')}</div>`;
+            }
+        }
+
+        function renderKBList() {
+            const container = document.getElementById('kbList');
+            if (state.kbList.length === 0) {
+                container.innerHTML = `<div class="text-center text-slate-400 py-8">${t('common.no_data')}</div>`;
+                return;
+            }
+
+            container.innerHTML = state.kbList.map(kb => `
+                <div class="kb-card p-3 rounded-lg border border-slate-200 cursor-pointer transition-all hover:border-blue-300 ${state.currentKB?.kb_id === kb.kb_id ? 'active' : ''}" onclick="selectKB('${kb.kb_id}')">
+                    <div class="flex items-center justify-between mb-1">
+                        <h4 class="font-medium text-slate-700 truncate">${kb.name}</h4>
+                        <button onclick="event.stopPropagation(); deleteKB('${kb.kb_id}')" class="text-slate-400 hover:text-red-500">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="flex items-center space-x-3 text-xs text-slate-500">
+                        <span>${kb.document_count} ${i18n.t('common.docs')}</span>
+                        <span>${kb.chunk_count} ${i18n.t('common.chunks')}</span>
+                    </div>
+                    ${kb.description ? `<p class="text-xs text-slate-400 mt-1 truncate">${kb.description}</p>` : ''}
+                </div>
+            `).join('');
+        }
+
+        async function selectKB(kb_id) {
+            const kb = state.kbList.find(k => k.kb_id === kb_id);
+            if (!kb) return;
+
+            state.currentKB = kb;
+            renderKBList();
+
+            document.getElementById('kbTitle').textContent = kb.name;
+            document.getElementById('kbSubtitle').textContent = `ID: ${kb.kb_id} | ${kb.document_count} 文档 | ${kb.chunk_count} 分块`;
+            document.getElementById('kbStats').textContent = `创建于 ${formatDate(kb.created_at)}`;
+
+            await loadFileList();
+            await loadChunks();
+        }
+
+        async function loadFileList() {
+            if (!state.currentKB) return;
+
+            try {
+                const response = await fetch(`/api/knowledge/${state.currentKB.kb_id}/files`);
+                const data = await response.json();
+                state.fileList = data.data || [];
+                renderFileList();
+            } catch (error) {
+                console.error('加载文件列表失败:', error);
+            }
+        }
+
+        function renderFileList() {
+            const container = document.getElementById('fileList');
+            if (!state.currentKB) {
+                container.innerHTML = `<div class="text-center text-slate-400 py-12">${t('chat.no_kb')}</div>`;
+                return;
+            }
+
+            if (state.fileList.length === 0) {
+                container.innerHTML = `<div class="text-center text-slate-400 py-12">${t('admin.no_files')}</div>`;
+                return;
+            }
+
+            container.innerHTML = state.fileList.map(file => `
+                <div class="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h4 class="font-medium text-slate-700">${file.original_name}</h4>
+                            <div class="flex items-center space-x-3 text-xs text-slate-500">
+                                <span>${file.chunk_count} ${i18n.t('common.chunks')}</span>
+                                <span>${formatDate(file.upload_date)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="viewRawDoc('${file.file_id}')" class="text-blue-600 hover:text-blue-700 text-sm font-medium">
+                            ${t('admin.file_preview')}
+                        </button>
+                        <button onclick="deleteFile('${file.file_id}')" class="text-red-500 hover:text-red-600 text-sm font-medium">
+                            ${t('common.delete')}
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function viewRawDoc(file_id) {
+            if (!state.currentKB) return;
+
+            try {
+                const response = await fetch(`/api/knowledge/${state.currentKB.kb_id}/raw/${file_id}`);
+                const data = await response.json();
+
+                document.getElementById('rawDocTitle').textContent = data.data.original_name;
+                document.getElementById('rawDocMeta').textContent = `文件大小: ${formatSize(data.data.size)} | 编码: ${data.data.encoding}`;
+                document.getElementById('rawDocContent').textContent = data.data.content;
+
+                document.getElementById('rawDocModal').classList.remove('hidden');
+            } catch (error) {
+                console.error('查看原始文档失败:', error);
+                alert(t('common.failed'));
+            }
+        }
+
+        function closeRawDocModal() {
+            document.getElementById('rawDocModal').classList.add('hidden');
+        }
+
+        async function deleteFile(file_id) {
+            if (!state.currentKB) return;
+            if (!confirm(t('admin.delete_confirm'))) return;
+
+            try {
+                const response = await fetch(`/api/knowledge/${state.currentKB.kb_id}/files/${file_id}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    await loadFileList();
+                    await loadChunks();
+                    await loadKBList();
+                }
+            } catch (error) {
+                console.error('删除文件失败:', error);
+                alert(t('common.failed'));
+            }
+        }
+
+        async function loadChunks() {
+            if (!state.currentKB) return;
+
+            state.chunkLimit = parseInt(document.getElementById('chunkLimit').value) || 20;
+
+            try {
+                const response = await fetch(`/api/knowledge/${state.currentKB.kb_id}/chunks?limit=${state.chunkLimit}&offset=${state.chunkOffset}`);
+                const data = await response.json();
+
+                state.chunks = data.data || [];
+                state.chunkTotal = data.total || 0;
+
+                renderChunkList();
+                renderChunkPagination();
+            } catch (error) {
+                console.error('加载分块列表失败:', error);
+            }
+        }
+
+        function renderChunkList() {
+            const container = document.getElementById('chunkList');
+            const countEl = document.getElementById('chunkCount');
+
+            if (!state.currentKB) {
+                container.innerHTML = `<div class="text-center text-slate-400 py-12">${t('chat.no_kb')}</div>`;
+                countEl.textContent = '';
+                return;
+            }
+
+            countEl.textContent = `共 ${state.chunkTotal} 个分块`;
+
+            if (state.chunks.length === 0) {
+                container.innerHTML = `<div class="text-center text-slate-400 py-12">${t('admin.no_chunks')}</div>`;
+                return;
+            }
+
+            container.innerHTML = state.chunks.map(chunk => `
+                <div class="p-4 bg-slate-50 rounded-lg border border-slate-200 hover:border-blue-300 cursor-pointer transition-colors" onclick="selectChunk('${chunk.id}')">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="text-xs font-mono text-slate-400">${chunk.id.slice(0, 8)}...</span>
+                        <button onclick="event.stopPropagation(); viewVector('${chunk.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">
+                            ${t('admin.view_vector')}
+                        </button>
+                    </div>
+                    <p class="text-sm text-slate-700 line-clamp-3">${chunk.text}</p>
+                    ${chunk.metadata && Object.keys(chunk.metadata).length > 0 ? `
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            ${Object.entries(chunk.metadata).map(([k, v]) => `
+                                <span class="text-xs px-2 py-1 bg-slate-200 text-slate-600 rounded">${k}: ${String(v).slice(0, 20)}</span>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        function renderChunkPagination() {
+            const container = document.getElementById('chunkPagination');
+            const pages = Math.ceil(state.chunkTotal / state.chunkLimit);
+
+            if (pages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            let html = '';
+
+            if (state.chunkOffset > 0) {
+                html += `<button onclick="setChunkPage(0)" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">${i18n.t('common.page_first')}</button>`;
+                html += `<button onclick="setChunkPage(${state.chunkOffset - state.chunkLimit})" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">${i18n.t('common.page_prev')}</button>`;
+            }
+
+            for (let i = 0; i < pages; i++) {
+                const offset = i * state.chunkLimit;
+                const isActive = offset === state.chunkOffset;
+                html += `<button onclick="setChunkPage(${offset})" class="px-3 py-1 text-sm border rounded ${isActive ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 hover:bg-slate-100'}">${i + 1}</button>`;
+            }
+
+            if (state.chunkOffset + state.chunkLimit < state.chunkTotal) {
+                html += `<button onclick="setChunkPage(${state.chunkOffset + state.chunkLimit})" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">${i18n.t('common.page_next')}</button>`;
+                html += `<button onclick="setChunkPage(${Math.max(0, (pages - 1) * state.chunkLimit)})" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">${i18n.t('common.page_last')}</button>`;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function setChunkPage(offset) {
+            state.chunkOffset = Math.max(0, offset);
+            loadChunks();
+        }
+
+        async function viewVector(chunk_id) {
+            if (!state.currentKB) return;
+
+            try {
+                const response = await fetch(`/api/knowledge/${state.currentKB.kb_id}/chunks/${chunk_id}`);
+                const data = await response.json();
+
+                const info = data.data;
+                state.selectedChunk = info;
+
+                switchTab('vectors');
+                renderVectorDetail();
+            } catch (error) {
+                console.error('获取向量详情失败:', error);
+                alert(t('common.failed'));
+            }
+        }
+
+        function renderVectorDetail() {
+            const container = document.getElementById('vectorContent');
+            const statsEl = document.getElementById('vectorStats');
+
+            if (!state.selectedChunk) {
+                container.innerHTML = `<div class="text-center text-slate-400 py-12">${t('admin.no_vector')}</div>`;
+                statsEl.textContent = '';
+                return;
+            }
+
+            const info = state.selectedChunk;
+            const embedInfo = info.embedding_info || {};
+
+            statsEl.textContent = `维度: ${embedInfo.dimension || '-'} | 最小值: ${embedInfo.min_value?.toFixed(4) || '-'} | 最大值: ${embedInfo.max_value?.toFixed(4) || '-'}`;
+
+            container.innerHTML = `
+                <div class="p-4 bg-slate-50 rounded-lg">
+                    <h4 class="font-semibold text-slate-700 mb-3">${t('admin.chunk_text')}</h4>
+                    <pre class="code-preview text-sm text-slate-600 whitespace-pre-wrap">${info.text || '(空)'}</pre>
+                </div>
+
+                <div class="p-4 bg-slate-50 rounded-lg">
+                    <h4 class="font-semibold text-slate-700 mb-3">${t('admin.chunk_metadata')}</h4>
+                    <pre class="code-preview text-sm text-slate-600">${JSON.stringify(info.metadata || {}, null, 2)}</pre>
+                </div>
+
+                <div class="p-4 bg-slate-50 rounded-lg">
+                    <h4 class="font-semibold text-slate-700 mb-3">${t('admin.vector_preview')}</h4>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-white p-3 rounded-lg border border-slate-200">
+                            <span class="text-xs text-slate-500">${t('admin.vector_dimension')}</span>
+                            <p class="text-lg font-semibold text-slate-700">${embedInfo.dimension || '-'}</p>
+                        </div>
+                        <div class="bg-white p-3 rounded-lg border border-slate-200">
+                            <span class="text-xs text-slate-500">${t('admin.vector_mean')}</span>
+                            <p class="text-lg font-semibold text-slate-700">${embedInfo.avg_value?.toFixed(4) || '-'}</p>
+                        </div>
+                        <div class="bg-white p-3 rounded-lg border border-slate-200">
+                            <span class="text-xs text-slate-500">${t('admin.vector_min')}</span>
+                            <p class="text-lg font-semibold text-slate-700">${embedInfo.min_value?.toFixed(4) || '-'}</p>
+                        </div>
+                        <div class="bg-white p-3 rounded-lg border border-slate-200">
+                            <span class="text-xs text-slate-500">${t('admin.vector_max')}</span>
+                            <p class="text-lg font-semibold text-slate-700">${embedInfo.max_value?.toFixed(4) || '-'}</p>
+                        </div>
+                    </div>
+
+                    <h5 class="text-sm font-medium text-slate-600 mb-2">${t('admin.vector_preview')}</h5>
+                    <pre class="code-preview text-sm text-slate-600">${JSON.stringify(embedInfo.sample_values || [], null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        function selectChunk(chunk_id) {
+            state.selectedChunk = null;
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('text-blue-600', 'border-blue-600');
+                el.classList.add('text-slate-500');
+            });
+
+            document.getElementById(`tab-${tabName}-content`).classList.add('active');
+            const btn = document.querySelector(`button[onclick="switchTab('${tabName}')"]`);
+            btn.classList.remove('text-slate-500');
+            btn.classList.add('text-blue-600', 'border-blue-600');
+
+            if (tabName === 'vectors') {
+                renderVectorDetail();
+            }
+        }
+
+        function createKB() {
+            document.getElementById('createKBModal').classList.remove('hidden');
+        }
+
+        function closeCreateKBModal() {
+            document.getElementById('createKBModal').classList.add('hidden');
+            document.getElementById('newKBName').value = '';
+            document.getElementById('newKBDesc').value = '';
+        }
+
+        async function submitCreateKB() {
+            const name = document.getElementById('newKBName').value.trim();
+            const desc = document.getElementById('newKBDesc').value.trim();
+
+            if (!name) {
+                alert(t('kb.name_required'));
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/knowledge/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, description: desc })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    closeCreateKBModal();
+                    await loadKBList();
+                } else {
+                    alert(data.message || t('common.failed'));
+                }
+            } catch (error) {
+                console.error('创建知识库失败:', error);
+                alert(t('common.failed'));
+            }
+        }
+
+        async function deleteKB(kb_id) {
+            if (!confirm(t('kb.delete_confirm'))) return;
+
+            try {
+                const response = await fetch(`/api/knowledge/${kb_id}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    state.currentKB = null;
+                    await loadKBList();
+                    document.getElementById('kbTitle').textContent = t('kb.select_placeholder');
+                    document.getElementById('kbSubtitle').textContent = t('admin.kb_subtitle');
+                    document.getElementById('kbStats').textContent = '';
+                    renderFileList();
+                    renderChunkList();
+                    state.selectedChunk = null;
+                    renderVectorDetail();
+                }
+            } catch (error) {
+                console.error('删除知识库失败:', error);
+                alert(t('common.failed'));
+            }
+        }
+
+        function uploadFile() {
+            document.getElementById('uploadModal').classList.remove('hidden');
+        }
+
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.add('hidden');
+            document.getElementById('uploadFileInput').value = '';
+        }
+
+        async function submitUpload() {
+            const input = document.getElementById('uploadFileInput');
+            if (!input.files || input.files.length === 0) {
+                alert(t('admin.select_file'));
+                return;
+            }
+
+            if (!state.currentKB) {
+                alert(t('chat.no_kb'));
+                return;
+            }
+
+            const file = input.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`/api/knowledge/${state.currentKB.kb_id}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    closeUploadModal();
+                    await loadFileList();
+                    await loadKBList();
+                    alert(t('admin.upload_success'));
+                } else {
+                    alert(data.message || t('admin.upload_failed'));
+                }
+            } catch (error) {
+                console.error('上传文件失败:', error);
+                alert(t('admin.upload_failed'));
+            }
+        }
+
+        function refreshKB() {
+            loadKBList();
+            if (state.currentKB) {
+                loadFileList();
+                loadChunks();
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch {
+                return dateStr;
+            }
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            i18n.applyI18n();
+            loadKBList();
+
+            document.querySelector('#uploadModal .border-dashed').addEventListener('click', () => {
+                document.getElementById('uploadFileInput').click();
+            });
+
+            document.querySelector('#uploadModal .border-dashed').addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.currentTarget.classList.add('border-blue-500', 'bg-blue-50');
+            });
+
+            document.querySelector('#uploadModal .border-dashed').addEventListener('dragleave', (e) => {
+                e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50');
+            });
+
+            document.querySelector('#uploadModal .border-dashed').addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50');
+                if (e.dataTransfer.files.length > 0) {
+                    document.getElementById('uploadFileInput').files = e.dataTransfer.files;
+                }
+            });
+
+            // 语言切换时重新渲染动态内容
+            document.addEventListener('langChanged', () => {
+                renderKBList();
+                if (state.currentKB) {
+                    renderFileList();
+                    renderChunkList();
+                    renderVectorDetail();
+                }
+            });
+        });
+    </script>
+    <script>
+        // 主题切换与图标同步
+        function toggleTheme() {
+            var isDark = document.documentElement.classList.toggle('dark');
+            var t = isDark ? 'dark' : 'light';
+            localStorage.setItem('theme', t);
+            syncThemeIcons(t);
+        }
+        function syncThemeIcons(t) {
+            document.querySelectorAll('.theme-icon-sun').forEach(function (el) { el.classList.toggle('hidden', t !== 'dark'); });
+            document.querySelectorAll('.theme-icon-moon').forEach(function (el) { el.classList.toggle('hidden', t === 'dark'); });
+        }
+        syncThemeIcons(window.__theme || (document.documentElement.classList.contains('dark') ? 'dark' : 'light'));
+    </script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+# whiteBoxRAG — one-command local stack: Ollama (LLM + embeddings) + the RAG app.
+#
+#   docker compose up -d            # first run also pulls qwen2.5:7b + nomic-embed-text (~5 GB)
+#   open http://localhost:8080      # UI (auto-redirects to /static/index.html)
+#
+# Requires Docker Compose v2 (the `docker compose` plugin). Legacy docker-compose v1 is not supported
+# because this file relies on `depends_on.condition`.
+#
+# Without Docker: python main.py --install
+
+name: whiteboxrag
+
+services:
+  # ---------------------------------------------------------------------------
+  # Local LLM / embedding server
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: whiteboxrag-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # One-shot helper: pulls the two models the app needs, then exits.
+  # `app` waits for it to finish, so the demo works on the very first request.
+  # ---------------------------------------------------------------------------
+  ollama-models:
+    image: ollama/ollama:latest
+    container_name: whiteboxrag-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # `ollama` is the compose service name, not localhost
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "[models] pulling qwen2.5:7b ..."
+        ollama pull qwen2.5:7b
+        echo "[models] pulling nomic-embed-text:latest ..."
+        ollama pull nomic-embed-text:latest
+        echo "[models] ready"
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # whiteBoxRAG application (FastAPI served by Gunicorn, see deploy/Dockerfile)
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    container_name: whiteboxrag-app
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-models:
+        condition: service_completed_successfully
+    environment:
+      # IMPORTANT: inside a container "localhost" is the container itself, so the
+      # Ollama endpoint must point to the compose service name.
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:7b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:latest}
+      OLLAMA_EMBEDDING_DIM: ${OLLAMA_EMBEDDING_DIM:-768}
+      # Empty API_KEY = no authentication (fine for a local trial)
+      API_KEY: ${API_KEY:-}
+      API_RATE_LIMIT: ${API_RATE_LIMIT:-60}
+      # Only needed when LLM_PROVIDER=openai
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      # Vectors, documents, traces, logs and task state stay on the host
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+
+volumes:
+  ollama-models:

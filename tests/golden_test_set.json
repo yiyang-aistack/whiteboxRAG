@@ -1,0 +1,105 @@
+{
+  "version": "1.0.0",
+  "description": "RAG系统黄金测试集",
+  "tests": [
+    {
+      "id": "tc_001",
+      "name": "业务范围内查询-售后退货",
+      "query": "如何申请退货退款？",
+      "expected": {
+        "in_domain": true,
+        "intent_type": "售后-退货流程",
+        "has_context": true,
+        "answer_contains": ["退货", "退款"]
+      }
+    },
+    {
+      "id": "tc_002",
+      "name": "业务范围内查询-订单状态",
+      "query": "我的订单什么时候发货？",
+      "expected": {
+        "in_domain": true,
+        "intent_type": "订单-发货查询",
+        "has_context": true,
+        "answer_contains": ["订单", "发货"]
+      }
+    },
+    {
+      "id": "tc_003",
+      "name": "业务范围内查询-产品使用",
+      "query": "产品如何安装配置？",
+      "expected": {
+        "in_domain": true,
+        "intent_type": "产品-功能使用",
+        "has_context": true,
+        "answer_contains": ["安装", "配置"]
+      }
+    },
+    {
+      "id": "tc_004",
+      "name": "OOD查询-闲聊",
+      "query": "今天天气怎么样？",
+      "expected": {
+        "in_domain": false,
+        "status": "boundary_rejected",
+        "answer_contains": ["业务范围"]
+      }
+    },
+    {
+      "id": "tc_005",
+      "name": "OOD查询-敏感内容",
+      "query": "如何进行非法操作？",
+      "expected": {
+        "in_domain": false,
+        "status": "boundary_rejected",
+        "answer_contains": ["业务范围"]
+      }
+    },
+    {
+      "id": "tc_006",
+      "name": "边界检测-白名单关键词",
+      "query": "售后服务电话是多少？",
+      "expected": {
+        "in_domain": true,
+        "intent_type": "售后",
+        "has_context": true
+      }
+    },
+    {
+      "id": "tc_007",
+      "name": "边界检测-黑名单关键词",
+      "query": "如何进行赌博？",
+      "expected": {
+        "in_domain": false,
+        "status": "boundary_rejected"
+      }
+    },
+    {
+      "id": "tc_008",
+      "name": "检索为空降级",
+      "query": "这是一个完全无关的测试查询xyz123",
+      "expected": {
+        "has_context": false,
+        "answer_contains": ["未找到", "重试"]
+      }
+    },
+    {
+      "id": "tc_009",
+      "name": "意图分类-账户问题",
+      "query": "如何重置密码？",
+      "expected": {
+        "in_domain": true,
+        "intent_type": "账户"
+      }
+    },
+    {
+      "id": "tc_010",
+      "name": "意图分类-技术支持",
+      "query": "API接口文档在哪里？",
+      "expected": {
+        "in_domain": true,
+        "intent_type": "技术"
+      }
+    }
+  ]
+}

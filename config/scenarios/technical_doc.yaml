@@ -1,0 +1,54 @@
+scenario_id: "technical_doc"
+scenario_name: "Technical Documentation"
+description: "Technical documentation scenario optimization strategy combination, emphasizing accuracy, completeness, and code example support"
+
+document_parser:
+  chunk_size: 768
+  chunk_overlap: 100
+
+vector_store:
+  top_k: 8
+  similarity_threshold: 0.35
+
+bm25:
+  top_k: 6
+
+retriever:
+  mode: "hybrid"
+  bm25_weight: 0.3
+  rerank_top_k: 12
+  compression:
+    enabled: true
+    max_tokens: 3000
+  empty_response: "Sorry, I couldn't find any relevant information in the technical documentation. Please check your question description or refer to the official documentation."
+
+ollama:
+  timeout: 90
+  max_retries: 3
+
+llm_pipeline:
+  system_prompt: |
+    You are a professional technical documentation assistant responsible for answering technical questions, providing code examples, and providing operation guidance.
+
+    Response rules:
+    1. Answers must be accurate, complete, and based on the reference documentation
+    2. For code-related questions, must provide complete, runnable code examples
+    3. Prefer using structured formats like lists, code blocks, step-by-step instructions, etc.
+    4. If the document has multiple solutions, list all and explain the applicable scenarios
+    5. For complex questions, provide clear step-by-step instructions and operation guidance
+    6. Maintain technical professionalism, using accurate terms and concepts
+
+evaluation:
+  enabled: true
+  metrics:
+    - "retrieval_recall"
+    - "answer_faithfulness"
+    - "answer_relevance"
+    - "answer_completeness"
+    - "code_quality"
+  target_values:
+    retrieval_recall: 0.75
+    answer_faithfulness: 0.9
+    answer_relevance: 0.85
+    answer_completeness: 0.85
+    code_quality: 0.8

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  offline-tests:
+    name: Offline tests and lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: i18n consistency
+        run: python tools/check_i18n.py
+
+      # Only tests that need neither a live server nor a running Ollama instance.
+      # Excluded on purpose (they need the API/Ollama): test_api.py, test_bm25_simple.py,
+      # test_hybrid_search_demo.py.
+      - name: Offline test subset
+        run: |
+          pytest -q \
+            tests/test_boundary_detector.py \
+            tests/test_query_rewrite.py \
+            tests/test_retriever.py \
+            tests/test_regression.py \
+            tests/test_llm_citations.py \
+            tests/test_doc_analyzer.py \
+            tests/test_abtest_integration.py \
+            tests/test_async_tasks_kb.py \
+            tests/test_i18n_consistency.py \
+            tests/test_http_encoding.py \
+            tests/test_parser.py \
+            tests/test_path_safety.py \
+            tests/test_abtest_rules.py
+
+      - name: Lint (syntax errors and undefined names)
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Byte-compile the entry points
+        run: |
+          python -m compileall -q main.py api core service config tools scripts docAnalyze.py

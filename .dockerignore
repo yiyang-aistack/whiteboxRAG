@@ -1,0 +1,41 @@
+# Keep the Docker build context small.
+# Runtime data lives in ./storage, which is mounted as a volume (see docker-compose.yml)
+# and re-created by the Dockerfile, so it must never be baked into the image.
+
+.git
+.github
+.idea
+.vscode
+
+# Python caches / virtualenvs
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+venv/
+env/
+ENV/
+
+# Runtime data and logs
+storage/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dev-only material not needed inside the image
+docs/
+tests/
+assets/
+examples/
+*.md
+
+# OS noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak

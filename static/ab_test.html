@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="abtest.title">A/B对比测试 - whiteBoxRAG</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <script src="/static/i18n.js"></script>
+    <script>
+        // 尽早应用主题，避免刷新时闪白
+        (function () {
+            var t = localStorage.getItem('theme') || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            if (t === 'dark') document.documentElement.classList.add('dark');
+            window.__theme = t;
+        })();
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-slide-in { animation: slideIn 0.4s ease-out; }
+
+        /* ===== 浅色/深色主题覆盖 ===== */
+        html { color-scheme: light dark; }
+        .dark { color-scheme: dark; }
+        .dark body { background-color: #0f172a; }
+        .dark ::-webkit-scrollbar-track { background: #1e293b; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .dark .bg-slate-100 { background-color: #0f172a !important; }
+        .dark .bg-slate-50 { background-color: #1e293b !important; }
+        .dark .bg-white { background-color: #1e293b !important; }
+        .dark .bg-slate-200 { background-color: #334155 !important; }
+        .dark .text-slate-800, .dark .text-slate-700 { color: #e2e8f0 !important; }
+        .dark .text-slate-600 { color: #cbd5e1 !important; }
+        .dark .text-slate-500 { color: #94a3b8 !important; }
+        .dark .text-slate-400 { color: #64748b !important; }
+        .dark .text-slate-300 { color: #475569 !important; }
+        .dark .border-slate-200 { border-color: #334155 !important; }
+        .dark .border-slate-100 { border-color: #1e293b !important; }
+        .dark .border-slate-300 { border-color: #475569 !important; }
+        .dark .border-slate-200.rounded-lg { background-color: #1e293b; }
+        .dark input, .dark textarea, .dark select {
+            background-color: #0f172a !important; color: #e2e8f0 !important; border-color: #475569 !important;
+        }
+        .dark input::placeholder, .dark textarea::placeholder { color: #64748b !important; }
+        .dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+        .dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+        .dark .hover\:bg-slate-200:hover { background-color: #475569 !important; }
+        .dark .hover\:text-blue-600:hover { color: #60a5fa !important; }
+        .dark .hover\:text-blue-700:hover { color: #93c5fd !important; }
+        .dark .hover\:bg-blue-50:hover { background-color: rgba(30,58,138,0.4) !important; }
+        .dark .bg-blue-50 { background-color: rgba(30,58,138,0.35) !important; }
+        .dark .bg-green-50, .dark .bg-emerald-50 { background-color: rgba(20,83,45,0.35) !important; }
+        .dark .bg-red-50 { background-color: rgba(127,29,29,0.4) !important; }
+        .dark .bg-yellow-50, .dark .bg-amber-50, .dark .bg-orange-50 { background-color: rgba(113,63,18,0.4) !important; }
+        .dark .bg-purple-50 { background-color: rgba(76,29,149,0.35) !important; }
+        .dark .bg-slate-50\/40 { background-color: rgba(30,41,59,0.4) !important; }
+        .dark .bg-yellow-50\/40 { background-color: rgba(113,63,18,0.3) !important; }
+        .dark .bg-black\/40, .dark .bg-black\/50 { background-color: rgba(0,0,0,0.65) !important; }
+        .dark mark { background-color: #ca8a04 !important; color: #1e293b !important; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+    <!-- Header -->
+    <div class="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold text-slate-700" data-i18n="abtest.title">🔄 A/B对比测试</h1>
+            <div class="flex items-center gap-3">
+                <button id="themeToggle" onclick="toggleTheme()" data-i18n-title="common.theme_toggle" title="切换浅色/深色主题" class="text-slate-500 hover:bg-slate-100 rounded p-2 transition-colors">
+                    <svg class="w-5 h-5 theme-icon-moon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                    <svg class="w-5 h-5 theme-icon-sun hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                </button>
+                <button id="langToggle" onclick="i18n.toggleLang()" title="Switch language" class="text-slate-500 hover:bg-slate-100 rounded p-2 transition-colors text-sm font-medium">EN</button>
+                <a href="/static/index.html" data-i18n="abtest.back_home" class="text-sm text-blue-600 hover:text-blue-700">← 返回主页</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto p-6 space-y-6">
+        <!-- ====== 配置区域（始终可见） ====== -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" id="configSection">
+            <div class="p-4 border-b border-slate-200">
+                <h2 class="font-semibold text-slate-700" data-i18n="abtest.config">测试配置</h2>
+            </div>
+            <div class="p-4 space-y-4">
+                <!-- 测试模式切换 -->
+                <div class="flex items-center gap-2 border-b border-slate-200 pb-3">
+                    <span class="text-sm font-medium text-slate-700 mr-2" data-i18n="abtest.mode">测试模式：</span>
+                    <button id="modeSingleBtn" onclick="switchMode('single')" class="px-3 py-1.5 text-sm rounded-lg transition-colors bg-blue-600 text-white" data-i18n="abtest.mode_single">单条测试</button>
+                    <button id="modeBatchBtn" onclick="switchMode('batch')" class="px-3 py-1.5 text-sm rounded-lg transition-colors bg-slate-100 text-slate-600 hover:bg-slate-200" data-i18n="abtest.mode_batch">批量测试</button>
+                    <span id="batchHint" class="hidden text-xs text-slate-400 ml-2" data-i18n="abtest.batch_hint">支持多问句批量运行全部变体，输出指标均值</span>
+                </div>
+
+                <!-- 知识库（两种模式共用） -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1" data-i18n="abtest.kb">知识库</label>
+                        <select id="abTestKBId" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="" data-i18n="abtest.kb_placeholder">请选择知识库</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 单条测试查询输入 -->
+                <div id="singleQuerySection" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="md:col-span-3">
+                        <label class="block text-sm font-medium text-slate-700 mb-1" data-i18n="abtest.query">测试查询</label>
+                        <input type="text" id="abTestQuery" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" data-i18n-placeholder="abtest.query_placeholder" placeholder="输入要测试的问题...">
+                    </div>
+                </div>
+
+                <!-- 批量测试问句集 -->
+                <div id="batchQuerySection" class="hidden space-y-3">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-slate-700 mb-1" data-i18n="abtest.batch_label">测试问句集（每行一条，最多50条）</label>
+                            <textarea id="batchQueriesInput" rows="6" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" data-i18n-placeholder="abtest.batch_placeholder" placeholder="请输入测试问句，每行一条&#10;例如：&#10;产品有哪些功能？&#10;如何申请退款？&#10;联系方式是什么？"></textarea>
+                            <div class="text-xs text-slate-400 mt-1"><span data-i18n="abtest.batch_count">当前问句数：</span><span id="batchQueryCount">0</span></div>
+                        </div>
+                        <div class="md:col-span-1">
+                            <label class="block text-sm font-medium text-slate-700 mb-1" data-i18n="abtest.file_import">从文件导入</label>
+                            <div class="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer" onclick="document.getElementById('batchFileInput').click()">
+                                <svg class="w-8 h-8 mx-auto text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                </svg>
+                                <div class="text-xs text-slate-500" data-i18n="abtest.file_hint">点击上传 .txt / .csv 文件</div>
+                                <div class="text-[10px] text-slate-400 mt-1" data-i18n="abtest.file_hint2">每行一条问句</div>
+                                <input type="file" id="batchFileInput" accept=".txt,.csv" class="hidden" onchange="handleBatchFile(event)">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 变体配置 -->
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-sm font-medium text-slate-700" data-i18n="abtest.variants">变体配置（至少2个）</span>
+                        <button onclick="addVariant()" class="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                            </svg>
+                            <span data-i18n="abtest.add_variant">添加变体</span>
+                        </button>
+                    </div>
+                    <div id="variantsContainer" class="space-y-3"></div>
+                </div>
+
+                <!-- 开始按钮 -->
+                <div class="flex justify-end">
+                    <button id="startBtn" onclick="runTest()" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium" data-i18n="abtest.start">
+                        开始测试
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== 进度区域（测试中显示） ====== -->
+        <div id="progressSection" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-slide-in">
+            <div class="p-4 border-b border-slate-200">
+                <h2 class="font-semibold text-slate-700" data-i18n="abtest.progress">测试进度</h2>
+            </div>
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-2">
+                    <span id="progressStep" class="text-sm text-slate-600" data-i18n="abtest.step_init">正在初始化...</span>
+                    <span id="progressPercent" class="text-sm font-bold text-blue-600">0%</span>
+                </div>
+                <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                    <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-blue-600 h-full rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                </div>
+                <div id="progressSteps" class="mt-4 space-y-2"></div>
+            </div>
+        </div>
+
+        <!-- ====== 结果区域（测试完成后显示） ====== -->
+        <div id="resultsSection" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-slide-in">
+            <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                <h2 class="font-semibold text-slate-700" data-i18n="abtest.results">📊 测试结果</h2>
+                <button onclick="window.print()" class="text-sm text-blue-600 hover:text-blue-700" data-i18n="abtest.print">🖨️ 打印报告</button>
+            </div>
+            <div class="p-4">
+                <div id="resultSummary" class="mb-4 flex flex-wrap items-center gap-4 text-sm bg-slate-50 rounded-lg p-3"></div>
+                <div id="resultContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 简写别名，等价于 i18n.t()
+        const _ = (key) => i18n.t(key);
+        let variantIdx = 0;
+        let progressTimer = null;
+        let currentMode = 'single'; // 'single' | 'batch'
+
+        // ==================== 初始化 ====================
+        async function init() {
+            i18n.applyI18n();
+            await loadKnowledgeBases();
+            addVariant(i18n.t('abtest.variant_a'), 0.4);
+            addVariant(i18n.t('abtest.variant_b'), 0.6);
+            // 监听批量问句输入，实时计数
+            const batchInput = document.getElementById('batchQueriesInput');
+            batchInput.addEventListener('input', updateBatchQueryCount);
+        }
+
+        function updateBatchQueryCount() {
+            const queries = parseBatchQueries();
+            document.getElementById('batchQueryCount').textContent = queries.length;
+        }
+
+        function parseBatchQueries() {
+            const text = document.getElementById('batchQueriesInput').value || '';
+            return text.split('\n').map(s => s.trim()).filter(s => s.length > 0).slice(0, 50);
+        }
+
+        function switchMode(mode) {
+            currentMode = mode;
+            const singleBtn = document.getElementById('modeSingleBtn');
+            const batchBtn = document.getElementById('modeBatchBtn');
+            const singleSec = document.getElementById('singleQuerySection');
+            const batchSec = document.getElementById('batchQuerySection');
+            const hint = document.getElementById('batchHint');
+            if (mode === 'batch') {
+                singleBtn.className = 'px-3 py-1.5 text-sm rounded-lg transition-colors bg-slate-100 text-slate-600 hover:bg-slate-200';
+                batchBtn.className = 'px-3 py-1.5 text-sm rounded-lg transition-colors bg-blue-600 text-white';
+                singleSec.classList.add('hidden');
+                batchSec.classList.remove('hidden');
+                hint.classList.remove('hidden');
+            } else {
+                singleBtn.className = 'px-3 py-1.5 text-sm rounded-lg transition-colors bg-blue-600 text-white';
+                batchBtn.className = 'px-3 py-1.5 text-sm rounded-lg transition-colors bg-slate-100 text-slate-600 hover:bg-slate-200';
+                singleSec.classList.remove('hidden');
+                batchSec.classList.add('hidden');
+                hint.classList.add('hidden');
+            }
+        }
+
+        function handleBatchFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (file.size > 1024 * 1024) {
+                alert(i18n.t('abtest.alert_file_too_large'));
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                // 追加到 textarea（保留已有内容）
+                const ta = document.getElementById('batchQueriesInput');
+                const existing = ta.value.trim();
+                ta.value = existing ? (existing + '\n' + content) : content;
+                updateBatchQueryCount();
+            };
+            reader.onerror = function() { alert(i18n.t('abtest.alert_file_read_failed')); };
+            reader.readAsText(file, 'UTF-8');
+            // 清空 input 以便重复选择同一文件
+            event.target.value = '';
+        }
+
+        async function loadKnowledgeBases() {
+            try {
+                const res = await fetch('/api/knowledge/list');
+                const data = await res.json();
+                const select = document.getElementById('abTestKBId');
+                if (data.success && data.data) {
+                    data.data.forEach(kb => {
+                        select.innerHTML += `<option value="${kb.kb_id}">${kb.name}</option>`;
+                    });
+                }
+            } catch (e) {
+                console.error('加载知识库列表失败:', e);
+            }
+        }
+
+        // ==================== 变体管理 ====================
+        function addVariant(name, bm25Weight) {
+            if (!name) {
+                variantIdx++;
+                name = `变体${String.fromCharCode(65 + variantIdx)}`;
+            } else {
+                variantIdx++;
+            }
+            const container = document.getElementById('variantsContainer');
+            const html = `
+                <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 variant-item">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-sm font-medium text-slate-700">${name}</span>
+                        <button onclick="removeVariant(this)" class="text-red-500 hover:text-red-600 text-xs">${i18n.t('abtest.delete_variant')}</button>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <input type="hidden" name="variant_name" value="${name}">
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">${i18n.t('abtest.retrieval_mode')}</label>
+                            <select name="retrieval_mode" class="w-full border border-slate-200 rounded px-2 py-1 text-sm">
+                                <option value="">${i18n.t('common.default')}</option>
+                                <option value="hybrid">${i18n.t('abtest.mode_hybrid')}</option>
+                                <option value="vector">${i18n.t('abtest.mode_vector')}</option>
+                                <option value="bm25">${i18n.t('abtest.mode_bm25')}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">${i18n.t('abtest.bm25_weight')}</label>
+                            <input type="number" name="bm25_weight" step="0.1" min="0" max="1" value="${bm25Weight}" class="w-full border border-slate-200 rounded px-2 py-1 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">${i18n.t('abtest.similarity_threshold')}</label>
+                            <input type="number" name="similarity_threshold" step="0.05" min="0" max="1" value="0.1" class="w-full border border-slate-200 rounded px-2 py-1 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">${i18n.t('abtest.top_k')}</label>
+                            <input type="number" name="top_k" min="1" max="20" value="5" class="w-full border border-slate-200 rounded px-2 py-1 text-sm">
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function removeVariant(btn) {
+            const container = document.getElementById('variantsContainer');
+            if (container.children.length <= 2) {
+                alert(i18n.t('abtest.alert_min_variants'));
+                return;
+            }
+            btn.closest('.variant-item').remove();
+        }
+
+        // ==================== 工具函数 ====================
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        // ==================== 变体收集 ====================
+        function collectVariants() {
+            const variants = [];
+            document.querySelectorAll('.variant-item').forEach(div => {
+                variants.push({
+                    name: div.querySelector('input[name="variant_name"]').value,
+                    retrieval_mode: div.querySelector('select[name="retrieval_mode"]').value || null,
+                    bm25_weight: parseFloat(div.querySelector('input[name="bm25_weight"]').value) || null,
+                    similarity_threshold: parseFloat(div.querySelector('input[name="similarity_threshold"]').value) || null,
+                    top_k: parseInt(div.querySelector('input[name="top_k"]').value) || null,
+                    query_rewrite_enabled: true,
+                    rerank_enabled: true
+                });
+            });
+            return variants;
+        }
+
+        // ==================== 执行测试（含进度栏） ====================
+        async function runTest() {
+            if (currentMode === 'batch') {
+                return runBatchTest();
+            }
+            const kbId = document.getElementById('abTestKBId').value;
+            const query = document.getElementById('abTestQuery').value.trim();
+
+            if (!kbId) { alert(i18n.t('abtest.alert_select_kb')); return; }
+            if (!query) { alert(i18n.t('abtest.alert_enter_query')); return; }
+
+            const variants = collectVariants();
+            if (variants.length < 2) { alert(i18n.t('abtest.alert_min_variants')); return; }
+
+            // 显示进度区域，配置区域保持可见
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('resultsSection').classList.add('hidden');
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('startBtn').classList.add('opacity-50', 'cursor-not-allowed');
+            document.getElementById('startBtn').textContent = i18n.t('abtest.testing');
+
+            // 构建进度步骤
+            const steps = [
+                { label: i18n.t('common.init_test_env'), weight: 10 },
+                ...variants.map(v => ({
+                    label: `${i18n.t('common.execute_variant')} ${v.name} (${v.retrieval_mode || i18n.t('common.default_retrieval_mode')})`,
+                    weight: 60 / variants.length
+                })),
+                { label: i18n.t('common.analyze_comparison_results'), weight: 15 },
+                { label: i18n.t('common.generate_report'), weight: 15 }
+            ];
+
+            const stepsContainer = document.getElementById('progressSteps');
+            stepsContainer.innerHTML = steps.map((s, i) => `
+                <div class="step-item flex items-center gap-2 text-sm" data-step="${i}">
+                    <span class="step-icon w-5 h-5 rounded-full border-2 border-slate-300 flex items-center justify-center text-xs text-slate-400 shrink-0">○</span>
+                    <span class="step-text text-slate-500">${s.label}</span>
+                </div>
+            `).join('');
+
+            // 模拟进度推进（API 是单次请求，无法获取实时进度）
+            let currentProgress = 0;
+            let currentStep = 0;
+            markStepActive(0);
+
+            progressTimer = setInterval(() => {
+                if (currentProgress < 90) {
+                    currentProgress += Math.random() * 2.5 + 0.8;
+                    if (currentProgress > 90) currentProgress = 90;
+                    updateProgress(currentProgress, steps, currentStep);
+
+                    // 推进步骤指示器
+                    const stepThreshold = steps.slice(0, currentStep + 1).reduce((a, s) => a + s.weight, 0);
+                    if (currentProgress >= stepThreshold && currentStep < steps.length - 1) {
+                        markStepDone(currentStep);
+                        currentStep++;
+                        markStepActive(currentStep);
+                    }
+                }
+            }, 300);
+
+            // 发送 API 请求
+            try {
+                const res = await fetch('/api/chat/abtest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kb_id: kbId, query: query, variants: variants })
+                });
+                const data = await res.json();
+
+                clearInterval(progressTimer);
+
+                // 完成所有步骤
+                updateProgress(100, steps, steps.length - 1);
+                for (let i = 0; i < steps.length; i++) {
+                    if (i < steps.length - 1) markStepDone(i);
+                }
+                markStepDone(steps.length - 1);
+                document.getElementById('progressStep').textContent = _('common.test_completed');
+
+                setTimeout(() => {
+                    if (data.success) {
+                        renderResults(data);
+                    } else {
+                        alert(data.detail || data.message || _('common.test_failed'));
+                    }
+                }, 600);
+
+            } catch (e) {
+                clearInterval(progressTimer);
+                console.error(i18n.t('abtest.alert_test_failed'), e);
+                document.getElementById('progressStep').textContent = i18n.t('abtest.alert_test_failed');
+                document.getElementById('progressBar').className = 'bg-red-500 h-full rounded-full transition-all duration-500';
+                alert(i18n.t('abtest.alert_test_failed') + ':  ' + e.message);
+            } finally {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+                document.getElementById('startBtn').textContent = _('common.start_test');
+            }
+        }
+
+        function updateProgress(percent, steps, currentStep) {
+            document.getElementById('progressBar').style.width = percent + '%';
+            document.getElementById('progressPercent').textContent = Math.round(percent) + '%';
+            if (steps[currentStep] && percent < 100) {
+                document.getElementById('progressStep').textContent = steps[currentStep].label + '...';
+            }
+        }
+
+        function markStepActive(idx) {
+            const item = document.querySelector(`[data-step="${idx}"]`);
+            if (item) {
+                const icon = item.querySelector('.step-icon');
+                const text = item.querySelector('.step-text');
+                icon.className = 'step-icon w-5 h-5 rounded-full border-2 border-blue-500 flex items-center justify-center text-xs text-blue-500 shrink-0 animate-pulse';
+                icon.textContent = '●';
+                text.className = 'step-text text-blue-600 font-medium';
+            }
+        }
+
+        function markStepDone(idx) {
+            const item = document.querySelector(`[data-step="${idx}"]`);
+            if (item) {
+                const icon = item.querySelector('.step-icon');
+                const text = item.querySelector('.step-text');
+                icon.className = 'step-icon w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-xs text-white shrink-0';
+                icon.textContent = '✓';
+                text.className = 'step-text text-green-600';
+            }
+        }
+
+        // ==================== 批量测试 ====================
+        async function runBatchTest() {
+            const kbId = document.getElementById('abTestKBId').value;
+            if (!kbId) { alert(i18n.t('common.select_knowledge_base')); return; }
+
+            const queries = parseBatchQueries();
+            if (queries.length === 0) { alert(_('common.enter_test_queries')); return; }
+
+            const variants = collectVariants();
+            if (variants.length < 2) { alert(_('common.at_least_two_variants')); return; }
+
+            // 进度区域
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('resultsSection').classList.add('hidden');
+            const startBtn = document.getElementById('startBtn');
+            startBtn.disabled = true;
+            startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            startBtn.textContent = _('common.batch_test_running');
+
+            // 构建进度步骤：初始化 → 每条问句 → 分析
+            const totalQueries = queries.length;
+            const steps = [
+                { label: _('common.initialize_batch_test_environment'), weight: 5 },
+                ...queries.map((q, i) => ({
+                    label: `${i18n.t('common.execute_query')} ${i + 1}/${totalQueries}：${q.length > 20 ? q.slice(0, 20) + '...' : q}`,
+                    weight: 80 / totalQueries
+                })),
+                { label: _('common.aggregate_metrics_and_generate_report'), weight: 15 }
+            ];
+            const stepsContainer = document.getElementById('progressSteps');
+            stepsContainer.innerHTML = steps.map((s, i) => `
+                <div class="step-item flex items-center gap-2 text-sm" data-step="${i}">
+                    <span class="step-icon w-5 h-5 rounded-full border-2 border-slate-300 flex items-center justify-center text-xs text-slate-400 shrink-0">○</span>
+                    <span class="step-text text-slate-500">${escapeHtml(s.label)}</span>
+                </div>
+            `).join('');
+
+            let currentProgress = 0;
+            let currentStep = 0;
+            markStepActive(0);
+            progressTimer = setInterval(() => {
+                if (currentProgress < 90) {
+                    currentProgress += Math.random() * 1.5 + 0.4;
+                    if (currentProgress > 90) currentProgress = 90;
+                    updateProgress(currentProgress, steps, currentStep);
+                    const stepThreshold = steps.slice(0, currentStep + 1).reduce((a, s) => a + s.weight, 0);
+                    if (currentProgress >= stepThreshold && currentStep < steps.length - 1) {
+                        markStepDone(currentStep);
+                        currentStep++;
+                        markStepActive(currentStep);
+                    }
+                }
+            }, 400);
+
+            try {
+                const res = await fetch('/api/chat/abtest/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kb_id: kbId, queries: queries, variants: variants })
+                });
+                const data = await res.json();
+                clearInterval(progressTimer);
+
+                updateProgress(100, steps, steps.length - 1);
+                for (let i = 0; i < steps.length - 1; i++) markStepDone(i);
+                markStepDone(steps.length - 1);
+                document.getElementById('progressStep').textContent = _('common.batch_test_completed');
+
+                setTimeout(() => {
+                    if (data.success) {
+                        renderBatchResults(data, variants);
+                    } else {
+                        alert(data.detail || data.message || _('common.batch_test_failed'));
+                    }
+                }, 600);
+            } catch (e) {
+                clearInterval(progressTimer);
+                console.error(i18n.t('common.batch_test_failed'), e);
+                document.getElementById('progressStep').textContent = i18n.t('common.batch_test_failed');
+                document.getElementById('progressBar').className = 'bg-red-500 h-full rounded-full transition-all duration-500';
+                alert(_('common.batch_test_failed') + ': ' + e.batch_test_failed_reason || e.message);
+            } finally {
+                startBtn.disabled = false;
+                startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                startBtn.textContent = _('common.start_test');
+            }
+        }
+
+        function renderBatchResults(data, variants) {
+            // 摘要栏
+            let summaryHtml = `<span><strong>${_('common.test_type')}: </strong> ${_('common.batch_test')}</span>`;
+            summaryHtml += `<span><strong>${_('common.knowledge_id')}: </strong> ${escapeHtml(data.kb_id)}</span>`;
+            summaryHtml += `<span><strong>${_('common.question_count')}: </strong> ${data.query_count}</span>`;
+            summaryHtml += `<span><strong>${_('common.variant_count')}: </strong> ${variants.length}</span>`;
+            if (data.task_id) {
+                summaryHtml += `<span class="text-slate-400 text-xs">任务ID: ${escapeHtml(data.task_id)}</span>`;
+            }
+            document.getElementById('resultSummary').innerHTML = summaryHtml;
+
+            let html = '';
+
+            // 1) 变体均值对比表（核心）
+            if (data.summary && data.summary.length) {
+                const bestEval = data.best_by_eval;
+                const bestRecall = data.best_by_recall;
+                const bestDrift = data.best_by_drift;
+                html += `
+                    <div class="border border-slate-200 rounded-xl overflow-hidden mb-4">
+                        <div class="bg-slate-50 px-4 py-2 border-b border-slate-200 font-medium text-slate-700">${i18n.t('abtest.variant_metrics')}</div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+                                    <tr>
+                                        <th class="px-4 py-2 text-left">${_('common.variant')}</th>
+                                        <th class="px-4 py-2 text-center">${_('common.avg_eval_score')}</th>
+                                        <th class="px-4 py-2 text-center">${_('common.avg_recall_count')}</th>
+                                        <th class="px-4 py-2 text-center">${_('common.avg_drift_rate')}</th>
+                                        <th class="px-4 py-2 text-center">${_('common.mark')}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.summary.map(s => {
+                                        const isBestEval = bestEval && bestEval.name === s.name;
+                                        const isBestRecall = bestRecall && bestRecall.name === s.name;
+                                        const isBestDrift = bestDrift && bestDrift.name === s.name;
+                                        const badges = [];
+                                        if (isBestEval) badges.push(`<span class="text-green-600 text-[10px]">${_('common.best_eval')}</span>`);
+                                        if (isBestRecall) badges.push(`<span class="text-blue-600 text-[10px]">${_('common.best_recall')}</span>`);
+                                        if (isBestDrift) badges.push(`<span class="text-purple-600 text-[10px]">${_('common.low_drift')}</span>`);
+                                        return `
+                                            <tr class="border-t border-slate-100 ${isBestEval ? 'bg-green-50' : ''}">
+                                                <td class="px-4 py-2 font-medium text-slate-700">${escapeHtml(s.name)}</td>
+                                                <td class="px-4 py-2 text-center ${isBestEval ? 'text-green-600 font-bold' : 'text-slate-600'}">${s.avg_eval_score.toFixed(4)}</td>
+                                                <td class="px-4 py-2 text-center ${isBestRecall ? 'text-blue-600 font-bold' : 'text-slate-600'}">${s.avg_context_count.toFixed(1)}</td>
+                                                <td class="px-4 py-2 text-center ${isBestDrift ? 'text-purple-600 font-bold' : 'text-slate-600'}">${(s.avg_drift_rate * 100).toFixed(1)}%</td>
+                                                <td class="px-4 py-2 text-center space-y-1">${badges.join('<br>')}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 2) 每条问句明细
+            if (data.results && data.results.length) {
+                html += `
+                    <div class="border border-slate-200 rounded-xl overflow-hidden">
+                        <div class="bg-slate-50 px-4 py-2 border-b border-slate-200 font-medium text-slate-700">📝 逐条问句明细</div>
+                        <div class="p-3 space-y-3">
+                            ${data.results.map((r, qi) => `
+                                <div class="border border-slate-100 rounded-lg p-3 bg-white">
+                                    <div class="text-sm font-medium text-slate-700 mb-2">
+                                        <span class="text-slate-400 mr-2">Q${qi + 1}.</span>${escapeHtml(r.query)}
+                                    </div>
+                                    <div class="grid grid-cols-1 md:grid-cols-${Math.min(r.variants.length, 4)} gap-2">
+                                        ${r.variants.map((v, vi) => {
+                                            const evalScore = v.eval_score || 0;
+                                            const driftRate = v.drift_rate || 0;
+                                            return `
+                                                <div class="bg-slate-50 rounded-lg p-2 text-xs">
+                                                    <div class="font-medium text-slate-700 mb-1">${escapeHtml(v.name)}</div>
+                                                    <div class="grid grid-cols-3 gap-1 text-center">
+                                                        <div>
+                                                            <div class="text-slate-400 text-[10px]">${_('common.eval')}</div>
+                                                            <div class="font-bold text-green-600">${evalScore.toFixed(3)}</div>
+                                                        </div>
+                                                        <div>
+                                                            <div class="text-slate-400 text-[10px]">${_('common.recall')}</div>
+                                                            <div class="font-bold text-blue-600">${v.context_count}</div>
+                                                        </div>
+                                                        <div>
+                                                            <div class="text-slate-400 text-[10px]">${_('common.drift')}</div>
+                                                            <div class="font-bold ${driftRate > 0.3 ? 'text-red-600' : 'text-purple-600'}">${(driftRate * 100).toFixed(0)}%</div>
+                                                        </div>
+                                                    </div>
+                                                    ${v.trace_id ? `
+                                                        <button onclick="window.open('/static/index.html?trace_id=${v.trace_id}', '_blank')"
+                                                                class="mt-2 w-full text-[10px] text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded py-1 transition-colors">
+                                                            ${i18n.t('abtest.view_trace')}
+                                                        </button>
+                                                    ` : ''}
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            document.getElementById('resultContent').innerHTML = html;
+            document.getElementById('resultsSection').classList.remove('hidden');
+            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // ==================== 结果渲染 ====================
+        function renderResults(data) {
+            const comparison = data.comparison || {};
+
+            // 摘要栏
+            let summaryHtml = `<span><strong>${_('common.query')}:</strong> ${escapeHtml(data.query)}</span>`;
+            summaryHtml += `<span><strong>${_('common.kb_id')}:</strong> ${escapeHtml(data.kb_id)}</span>`;
+            if (comparison.best_by_evaluation) {
+                summaryHtml += `<span><strong>${_('common.best_eval')}:</strong> <span class="text-green-600 font-medium">${escapeHtml(comparison.best_by_evaluation.name)} (${comparison.best_by_evaluation.score.toFixed(3)})</span></span>`;
+            }
+            if (comparison.best_by_recall) {
+                summaryHtml += `<span><strong>${_('common.best_recall')}:</strong> <span class="text-blue-600 font-medium">${escapeHtml(comparison.best_by_recall.name)} (${comparison.best_by_recall.count})</span></span>`;
+            }
+            if (comparison.best_by_drift_rate) {
+                summaryHtml += `<span><strong>${_('common.best_drift_rate')}:</strong> <span class="text-purple-600 font-medium">${escapeHtml(comparison.best_by_drift_rate.name)} (${(comparison.best_by_drift_rate.drift_rate * 100).toFixed(0)}%)</span></span>`;
+            }
+            document.getElementById('resultSummary').innerHTML = summaryHtml;
+
+            // 变体卡片
+            let html = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">';
+
+            data.variants.forEach(variant => {
+                const evalScore = variant.evaluation?.overall_score || 0;
+                const driftRate = variant.drift_analysis?.drift_rate || 0;
+                const contradictionCount = variant.contradiction_count || 0;
+
+                html += `
+                    <div class="border border-slate-200 rounded-xl overflow-hidden">
+                        <div class="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-3">
+                            <div class="flex items-center justify-between">
+                                <span class="font-medium text-lg">${escapeHtml(variant.name)}</span>
+                                <span class="text-sm opacity-80">${_('common.config')}: ${variant.config.retrieval_mode || _('common.default')} | ${_('common.duration')}: ${(variant.duration || 0).toFixed(2)}s</span>
+                            </div>
+                        </div>
+                        <div class="p-4 space-y-3">
+                            <div class="grid grid-cols-3 gap-2 text-xs">
+                                <div class="bg-green-50 rounded-lg p-2 text-center">
+                                    <div class="text-green-600 font-medium">${_('common.eval_score')}</div>
+                                    <div class="text-lg font-bold">${evalScore.toFixed(3)}</div>
+                                </div>
+                                <div class="bg-blue-50 rounded-lg p-2 text-center">
+                                    <div class="text-blue-600 font-medium">${_('common.recall_count')}</div>
+                                    <div class="text-lg font-bold">${variant.context_count}</div>
+                                </div>
+                                <div class="bg-purple-50 rounded-lg p-2 text-center">
+                                    <div class="text-purple-600 font-medium">${_('common.drift_rate')}</div>
+                                    <div class="text-lg font-bold ${driftRate > 0.3 ? 'text-red-600' : 'text-green-600'}">${(driftRate * 100).toFixed(0)}%</div>
+                                </div>
+                            </div>
+                            <div class="text-xs text-slate-500">
+                                <div class="font-medium mb-1">${_('common.config_details')}</div>
+                                <div>${_('common.bm25_weight')}: ${variant.config.bm25_weight} | ${_('common.similarity_threshold')}: ${variant.config.similarity_threshold} | ${_('common.top_k')}: ${variant.config.top_k}</div>
+                            </div>
+                            ${contradictionCount > 0 ? `
+                                <div class="bg-red-50 rounded-lg p-2">
+                                    <div class="text-xs text-red-600 font-medium">${_('common.contradiction_count')}: ${contradictionCount}</div>
+                                </div>
+                            ` : ''}
+                            <div>
+                                <div class="text-xs text-slate-500 font-medium mb-1">${_('common.answer')}</div>
+                                <div class="text-sm text-slate-700 bg-slate-50 rounded-lg p-2 max-h-40 overflow-y-auto">${escapeHtml(variant.answer)}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-500 font-medium mb-1">${_('common.retrieved_documents')}</div>
+                                <div class="space-y-1 max-h-32 overflow-y-auto">
+                                    ${variant.context.map(ctx => `
+                                        <div class="text-[10px] text-slate-600 bg-slate-50 rounded px-2 py-1">
+                                            ${escapeHtml(ctx.metadata?.file_name || _('common.unknown_file_name'))} - ${escapeHtml((ctx.text || '').slice(0, 60))}...
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ${variant.trace_id ? `
+                                <div class="pt-2 border-t border-slate-100">
+                                    <button onclick="window.open('/static/index.html?trace_id=${variant.trace_id}', '_blank')"
+                                            class="w-full text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg py-1.5 transition-colors flex items-center justify-center gap-1">
+                                        🔍 查看检索溯源
+                                    </button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+
+            // 统计摘要
+            if (comparison.summary) {
+                html += `
+                    <div class="mt-4 border border-slate-200 rounded-xl p-4">
+                        <div class="font-medium text-slate-700 mb-3">${i18n.t('abtest.stats_summary')}</div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                            <div class="bg-slate-50 rounded-lg p-2">
+                                <div class="text-slate-500">${_('common.avg_answer_length')}</div>
+                                <div class="font-medium">${comparison.summary.avg_answer_length.toFixed(0)}</div>
+                            </div>
+                            <div class="bg-slate-50 rounded-lg p-2">
+                                <div class="text-slate-500">${_('common.avg_recall_count')}</div>
+                                <div class="font-medium">${comparison.summary.avg_context_count.toFixed(1)}</div>
+                            </div>
+                            <div class="bg-slate-50 rounded-lg p-2">
+                                <div class="text-slate-500">${_('common.avg_evaluation_score')}</div>
+                                <div class="font-medium">${comparison.summary.avg_evaluation_score.toFixed(3)}</div>
+                            </div>
+                            <div class="bg-slate-50 rounded-lg p-2">
+                                <div class="text-slate-500">${_('common.avg_drift_rate')}</div>
+                                <div class="font-medium">${(comparison.summary.avg_drift_rate * 100).toFixed(0)}%</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            document.getElementById('resultContent').innerHTML = html;
+            document.getElementById('resultsSection').classList.remove('hidden');
+            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        init();
+    </script>
+    <script>
+        // 主题切换与图标同步
+        function toggleTheme() {
+            var isDark = document.documentElement.classList.toggle('dark');
+            var t = isDark ? 'dark' : 'light';
+            localStorage.setItem('theme', t);
+            syncThemeIcons(t);
+        }
+        function syncThemeIcons(t) {
+            document.querySelectorAll('.theme-icon-sun').forEach(function (el) { el.classList.toggle('hidden', t !== 'dark'); });
+            document.querySelectorAll('.theme-icon-moon').forEach(function (el) { el.classList.toggle('hidden', t === 'dark'); });
+        }
+        syncThemeIcons(window.__theme || (document.documentElement.classList.contains('dark') ? 'dark' : 'light'));
+    </script>
+</body>
+</html>

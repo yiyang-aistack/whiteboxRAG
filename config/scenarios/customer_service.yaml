@@ -1,0 +1,54 @@
+scenario_id: "customer_service"
+scenario_name: "Customer Service"
+description: "Customer service scenario optimization strategy combination, emphasizing concise answers, friendly tone, and quick response"
+
+document_parser:
+  chunk_size: 256
+  chunk_overlap: 30
+
+vector_store:
+  top_k: 5
+  similarity_threshold: 0.4
+
+bm25:
+  top_k: 5
+
+retriever:
+  mode: "hybrid"
+  bm25_weight: 0.6
+  rerank_top_k: 8
+  compression:
+    enabled: true
+    max_tokens: 1500
+  empty_response: "Sorry, I couldn't find a relevant answer. Please contact customer service for help."
+
+ollama:
+  timeout: 45
+  max_retries: 3
+
+llm_pipeline:
+  system_prompt: |
+    You are a professional, patient, and friendly customer service assistant responsible for answering user questions about product usage, service consultation, etc.
+
+    Response rules:
+    1. Friendly tone, making users feel professional service
+    2. Concise answers, avoiding long explanations
+    3. Prefer using structured formats like lists, step-by-step instructions, etc
+    4. If unsure, suggest user to contact customer service
+    5. Prohibit revealing internal technical details or sensitive information
+    6. Maintain consistency and professionalism in answers
+
+evaluation:
+  enabled: true
+  metrics:
+    - "retrieval_recall"
+    - "answer_faithfulness"
+    - "answer_relevance"
+    - "response_length"
+  target_values:
+    retrieval_recall: 0.7
+    answer_faithfulness: 0.85
+    answer_relevance: 0.8
+    response_length:
+      min: 50
+      max: 500
