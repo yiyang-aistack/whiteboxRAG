@@ -1,6 +1,12 @@
 # whiteBoxRAG
 
-> **8G 内存的机器就能跑，每句话都能溯源。** whiteBoxRAG 是一套完全私有化的**白盒 RAG 系统，内置 RAG 调试台（RAG Debugger）** —— FastAPI + LlamaIndex + ChromaDB + Ollama，提供句子级溯源、未召回根因诊断和可 A/B 对比的检索流水线，而不是一个黑盒。
+> WhiteBoxRAG —— RAG 调试与评估工具箱：让 RAG 流水线的每一步都完全透明。
+> 源自真实生产实践：句子级引用溯源、未召回根因诊断、内置评估框架与可 A/B 对比的检索流水线。
+> 以离线 AI（offline-ai）的方式提供可观测性与引用溯源能力，用于构建可靠的私有知识助手系统。
+
+> 说明：为 RAG 调试与验证而优化，尚不适合直接作为面向终端用户的生产服务。
+
+> 目标读者：高级 RAG 开发者、研究者，以及希望看清 RAG 内部机制的用户。
 
 [English](README.md) | [中文文档](README_ZH.md)
 
@@ -13,7 +19,11 @@
 ![RAG debugger](https://img.shields.io/badge/built--in-RAG%20debugger-blueviolet)
 ![tests](https://img.shields.io/badge/tests-pytest%20%2B%20GitHub%20Actions-0A9EDC)
 
-![检索溯源面板：逐句可信度标签](assets/RagTrace.png)
+<div align="center">
+
+![句子级溯源面板：答案旁的逐句可信度判定](https://github.com/yiyang-aistack/assets/blob/main/whiteboxRAG/whiteboxRAG_overview.gif?raw=true)
+
+</div>
 
 ### 30 秒上手
 
@@ -36,26 +46,73 @@ uv run python scripts/seed_demo.py   # 终端 2：建演示知识库、提问并
 <summary><code>python scripts/seed_demo.py</code> 的输出长这样</summary>
 
 ```text
-==> Asking: 混合检索里 BM25 的默认权重是多少？
+==> Asking: hybrid retrieval with BM25 weight
 
 ==============================================================================
 ANSWER
 ==============================================================================
-混合检索默认启用，BM25 的默认权重为 0.4，向量权重为 0.6。[1]
+The hybrid retrieval mode uses a weighted fusion of BM25 keyword retrieval and vector semantic retrieval. Specifically, the default BM25 weight is set to 0.6, while the vector weight is derived as 1 minus the BM25 weight, which results in a value of 0.4 [Document 1].
+
+The fusion score calculation formula is: Fusion score = BM25 weight × BM25 score + vector weight × vector score. For instance, if a chunk has a BM25 score of 8 and a vector score of 7, the fused score would be calculated as follows: (0.6 × 8) + (0.4 × 7) = 4.8 + 2.8 = 7.6 [Document 2].
+
+Furthermore, if the chunk's fusion score is below the similarity threshold (default set to 0.5), it will be discarded by default [Documents 1 and 2]. This configuration ensures that only relevant chunks pass through the filtering process.
+
+It's worth noting that when the vector weight (0.4) falls below the threshold (0.5), chunks that rely solely on the vector path cannot reach the threshold independently. In such cases, the system is designed to degrade gracefully by using reroute_on_empty_route, which enables the transfer of weights between retrieval paths based on their availability [Document 3].
+
+------------------------------------------------------------------------------
+RETRIEVAL
+------------------------------------------------------------------------------
+  mode=hybrid  has_results=True  chunks=5  duration=15.95s
+  [1] score=0.83 source=9ffcc412_whiteBoxRAG_FAQ.txt
+      2. Default Parameters & Core Metrics。1. The service listens on port 8080 by default (HOST and PORT can be over...
+  [2] score=0.676 source=9ffcc412_whiteBoxRAG_FAQ.txt
+      3. Fusion score = BM25 weight × BM25 score + vector weight × vector score. Hybrid retrieval returns 5 chunks b...
+  [3] score=0.618 source=9ffcc412_whiteBoxRAG_FAQ.txt
+      4. Because the vector weight (0.4) is below the threshold (0.5), chunks that hit only on the vector path canno...
 
 ------------------------------------------------------------------------------
 SENTENCE-LEVEL TRACING (the white-box part)
 ------------------------------------------------------------------------------
+  [OK]   faithful summary of the retrieved chunks
+        The hybrid retrieval mode uses a weighted fusion of BM25 keyword retrieval and vector semantic retri
+        basis=similarity heuristic (not a fact check)
   [CITE] cited document [n] is part of the retrieved context
-        混合检索默认启用，BM25 的默认权重为 0.4，向量权重为 0.6。[1]
+        Specifically, the default BM25 weight is set to 0.6, while the vector weight is derived as 1 minus t
         basis=citation
-  sentences=1  citation_verified=1  direct_quote=0  summary=0  drift=0  unverified=0  drift_rate=0.0
+  [OK]   direct evidence in the retrieved chunks
+        The fusion score calculation formula is: Fusion score = BM25 weight × BM25 score + vector weight × v
+        basis=similarity heuristic (not a fact check)
+  [CITE] cited document [n] is part of the retrieved context
+        For instance, if a chunk has a BM25 score of 8 and a vector score of 7, the fused score would be cal
+        basis=citation
+  [WARN] low confidence, no close match
+        Furthermore, if the chunk's fusion score is below the similarity threshold (default set to 0.5), it 
+        basis=similarity heuristic (not a fact check)
+  [WARN] low confidence, no close match
+        This configuration ensures that only relevant chunks pass through the filtering process.
+        basis=similarity heuristic (not a fact check)
+  [OK]   faithful summary of the retrieved chunks
+        It's worth noting that when the vector weight (0.4) falls below the threshold (0.5), chunks that rel
+        basis=similarity heuristic (not a fact check)
+  [CITE] cited document [n] is part of the retrieved context
+        In such cases, the system is designed to degrade gracefully by using reroute_on_empty_route, which e
+        basis=citation
+  sentences=8  citation_verified=3  direct_quote=1  summary=2  drift=0  unverified=0  drift_rate=0.0
 
 ------------------------------------------------------------------------------
 EVALUATION
 ------------------------------------------------------------------------------
-  overall_score=0.86  is_passing=True
-  retrieval_recall=1.0 (target=0.7, pass=True)
+  overall_score=0.8071  is_passing=True
+  retrieval_score_avg=0.6487 (target=0.5, pass=True)
+  retrieval_score_std=0.1012 (target=0.1, pass=False)
+  answer_faithfulness=0.8151 (target=0.7, pass=True)
+  semantic_consistency=0.5674 (target=0.5, pass=True)
+  citation_coverage=0.375 (target=0.45, pass=False)
+  answer_relevance=0.6592 (target=0.5, pass=True)
+  hallucination_rate=0.0 (target=0.15, pass=True)
+  rejection_accuracy=None (target=0.8, pass=None)
+  empty_response=False (target=False, pass=True)
+  response_length=1163 (target={'min': 50, 'max': 2000}, pass=True)
 ```
 
 示意输出：具体措辞取决于模型、命中的分块与场景配置。
@@ -63,11 +120,11 @@ EVALUATION
 
 ## 项目简介
 
-whiteBoxRAG 是一套面向生产的 RAG 平台，所有组件都留在本地：文档解析、向量化、向量存储、混合检索、大模型推理、溯源与评估全部在本机完成。它面向需要"白盒"知识助手的团队 —— 数据不出内网，但回答必须可被检查；同时保留 OpenAI 作为可选的云端模型提供者。
+whiteBoxRAG 源自生产环境的 RAG 平台，把完整流水线全部放在本地执行：文档解析、向量化、向量存储、混合检索、大模型推理、溯源与评估都在本机完成。它面向需要透明知识助手的团队，让敏感数据不出自己的环境，同时保留 OpenAI 作为可选的大模型提供者。
 
-名字就是承诺：不做黑盒。内置的 **RAG 调试台**会告诉你哪一句话依据的是哪个分块、某篇文档为什么没有被召回，让"检索/生成失败"可以被诊断，而不是靠猜。
+不做黑盒：内置的 **RAG 调试台会暴露流水线的每个阶段**。你可以把回答里的每一句话映射回支撑它的源分块，也能诊断某篇文档为什么没有出现在检索结果里，把"靠猜的排查"变成有据可依的根因分析。
 
-系统自带免构建的 Web 前端、59 个 REST 端点、场景化配置、带引用校验的句子级溯源、业务边界（OOD）检测、能从用户反馈中沉淀规则的规则引擎、可 A/B 对比的检索流水线，以及一套内置评估框架。
+系统自带免构建的 Web 界面、59 个 REST 端点与场景化配置，核心能力覆盖带引用校验的句子级溯源、业务边界（OOD）检测、由用户反馈驱动的规则引擎、检索流水线的 A/B 测试，以及一套内置评估框架。
 
 ## 核心亮点
 
@@ -83,9 +140,9 @@ whiteBoxRAG 是一套面向生产的 RAG 平台，所有组件都留在本地：
 
 ## 效果预览
 
-| 检索溯源面板（业务 + 技术视图） | A/B 测试配置 | A/B 测试结果 |
+| 检索溯源面板（业务 + 技术视图） | A/B 测试配置 | 结果与细节 |
 |---|---|---|
-| ![逐句可信度溯源的检索面板](assets/RagTrace.png) | ![A/B 测试变体配置](assets/abTest.png) | ![A/B 测试对比结果](assets/abTest_result.png) |
+| ![逐句可信度溯源的检索面板](assets/RagTrace.png) | ![A/B 测试变体配置](assets/abTest_results.png) | ![处理步骤结果](assets/ProcessingStep.png) |
 | 匹配结论、召回汇总与逐句 ✅/⚠️/❌ 标签；技术视图另有查询改写流水、BM25 与向量三路得分对比、逐句相似度数值。 | 每个变体可单独设置检索模式、BM25 权重、相似度阈值与 `top_k`。 | 并排展示评估得分、召回数量与漂移率，并给出各变体均值。 |
 
 ## 与常见 RAG 示例的差异
@@ -104,7 +161,7 @@ whiteBoxRAG 是一套面向生产的 RAG 平台，所有组件都留在本地：
 ## 主要功能
 
 **轻量化设计**
-- 8G 内存 CPU 机器即可运行，不需要 Redis、MySQL 或消息队列
+- 8G 内存 CPU 机器即可运行，以离线 AI（offline-ai）方式使用
 - 向量、文档、日志、溯源、任务状态全部以本地文件存储
 - 依赖面尽量小，部署快
 
@@ -119,6 +176,8 @@ whiteBoxRAG 是一套面向生产的 RAG 平台，所有组件都留在本地：
 - 相似度阈值过滤、重排序与上下文压缩
 - 查询改写：同义词扩展、错别字纠正、停用词净化，词典 YAML 支持热更新
 - 检索为空时优雅降级
+
+![三路检索得分对比：BM25 / 向量 / 融合](assets/three-way_Retrieval.png)
 
 **回答质量与安全**
 - 强制引用格式：大模型必须用 `[doc_id]` 标注事实，随后统一校验
@@ -370,6 +429,8 @@ cp .env.example .env
 
 系统共提供 **59 个 REST 端点**，分为六个模块：知识库管理、对话问答、场景管理、质量评估、文档优化、系统监控。
 交互式文档位于 `http://localhost:8080/docs`（Swagger UI）与 `/redoc`。
+
+![假设分析：手动勾选证据片段后重新生成答案](assets/HypothesisAnalysis.png)
 
 完整的端点清单（方法、功能说明与请求示例）见 [`docs/ARCHITECTURE_ZH.md`](docs/ARCHITECTURE_ZH.md)；
 英文完整表格见 [`README.md`](README.md#api-reference)。

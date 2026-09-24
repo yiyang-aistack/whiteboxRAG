@@ -1,10 +1,13 @@
 # whiteBoxRAG
 
-> whiteBoxRAG delivers full transparency for intermediate steps from user Query to complete RAG execution. Extracted from a real‑world production RAG project, this powerful tool facilitates query tracing, root‑cause analysis and pinpointing directions for further optimization. It runs on an 8 GB CPU‑only machine with per‑sentence citation support. As a fully on‑premises solution with built‑in RAG debugger (FastAPI + LlamaIndex + ChromaDB + Ollama), it provides sentence‑level provenance, retrieval root‑cause diagnostics and an A/B‑testable retrieval pipeline to replace opaque black‑box RAG.
+# whiteBoxRAG
+> WhiteBoxRAG - Debugging & Evaluation toolkit — full transparency for every step of your RAG pipeline.
+> Built from real‑world production experience: sentence‑level citation tracing, recall root‑cause diagnosis, built‑in evaluation suite and A/B‑testable retrieval pipeline.
+> Preferred as offline-ai with observability and citation-tracing capabilities to building reliable private knowledge‑assistant systems.
 
-Note: It is designed to be internal RAG debugging, not for production use purpose.
+> Note: Optimized for RAG debugging & validation, not ready for direct end‑user production serving.
 
-Target Audience: RAG developers, researchers, and users who want to understand the inner workings of RAG systems.
+> Target Audience: Senior RAG Developer, researchers, and users who want to understand the RAG inside  .
 
 [English](README.md) | [中文文档](README_ZH.md)
 
@@ -19,7 +22,11 @@ Target Audience: RAG developers, researchers, and users who want to understand t
 ![RAG debugger](https://img.shields.io/badge/built--in-RAG%20debugger-blueviolet)
 ![tests](https://img.shields.io/badge/tests-pytest%20%2B%20GitHub%20Actions-0A9EDC)
 
-![Sentence level tracing panel: per-sentence confidence verdicts next to the answer](https://github.com/yiyang-aistack/assets/blob/main/whiteboxRAG/whiteboxRAG_overview.gif)
+<div align="center">
+
+![Sentence-level tracing panel: per-sentence confidence verdicts next to the answer](https://github.com/yiyang-aistack/assets/blob/main/whiteboxRAG/whiteboxRAG_overview.gif?raw=true)
+
+</div>
 
 ### Try it in 30 seconds
 
@@ -43,34 +50,73 @@ models and boots the app with a single command — see [Docker](#docker-compose-
 <summary>What <code>python scripts/seed_demo.py</code> prints</summary>
 
 ```text
-==> Asking: 混合检索里 BM25 的默认权重是多少？
+==> Asking: hybrid retrieval with BM25 weight
 
 ==============================================================================
 ANSWER
 ==============================================================================
-混合检索默认启用，BM25 的默认权重为 0.4，向量权重为 0.6。[1]
+The hybrid retrieval mode uses a weighted fusion of BM25 keyword retrieval and vector semantic retrieval. Specifically, the default BM25 weight is set to 0.6, while the vector weight is derived as 1 minus the BM25 weight, which results in a value of 0.4 [Document 1].
+
+The fusion score calculation formula is: Fusion score = BM25 weight × BM25 score + vector weight × vector score. For instance, if a chunk has a BM25 score of 8 and a vector score of 7, the fused score would be calculated as follows: (0.6 × 8) + (0.4 × 7) = 4.8 + 2.8 = 7.6 [Document 2].
+
+Furthermore, if the chunk's fusion score is below the similarity threshold (default set to 0.5), it will be discarded by default [Documents 1 and 2]. This configuration ensures that only relevant chunks pass through the filtering process.
+
+It's worth noting that when the vector weight (0.4) falls below the threshold (0.5), chunks that rely solely on the vector path cannot reach the threshold independently. In such cases, the system is designed to degrade gracefully by using reroute_on_empty_route, which enables the transfer of weights between retrieval paths based on their availability [Document 3].
 
 ------------------------------------------------------------------------------
 RETRIEVAL
 ------------------------------------------------------------------------------
-  mode=hybrid  has_results=True  chunks=3  duration=2.7s
-  [1] score=0.031 source=whiteBoxRAG_FAQ.txt
-      whiteBoxRAG 产品说明与常见问题（演示知识库） 二、默认参数与核心指标 ...
+  mode=hybrid  has_results=True  chunks=5  duration=15.95s
+  [1] score=0.83 source=9ffcc412_whiteBoxRAG_FAQ.txt
+      2. Default Parameters & Core Metrics。1. The service listens on port 8080 by default (HOST and PORT can be over...
+  [2] score=0.676 source=9ffcc412_whiteBoxRAG_FAQ.txt
+      3. Fusion score = BM25 weight × BM25 score + vector weight × vector score. Hybrid retrieval returns 5 chunks b...
+  [3] score=0.618 source=9ffcc412_whiteBoxRAG_FAQ.txt
+      4. Because the vector weight (0.4) is below the threshold (0.5), chunks that hit only on the vector path canno...
 
 ------------------------------------------------------------------------------
 SENTENCE-LEVEL TRACING (the white-box part)
 ------------------------------------------------------------------------------
+  [OK]   faithful summary of the retrieved chunks
+        The hybrid retrieval mode uses a weighted fusion of BM25 keyword retrieval and vector semantic retri
+        basis=similarity heuristic (not a fact check)
   [CITE] cited document [n] is part of the retrieved context
-        混合检索默认启用，BM25 的默认权重为 0.4，向量权重为 0.6。[1]
+        Specifically, the default BM25 weight is set to 0.6, while the vector weight is derived as 1 minus t
         basis=citation
-  sentences=1  citation_verified=1  direct_quote=0  summary=0  drift=0  unverified=0  drift_rate=0.0
+  [OK]   direct evidence in the retrieved chunks
+        The fusion score calculation formula is: Fusion score = BM25 weight × BM25 score + vector weight × v
+        basis=similarity heuristic (not a fact check)
+  [CITE] cited document [n] is part of the retrieved context
+        For instance, if a chunk has a BM25 score of 8 and a vector score of 7, the fused score would be cal
+        basis=citation
+  [WARN] low confidence, no close match
+        Furthermore, if the chunk's fusion score is below the similarity threshold (default set to 0.5), it 
+        basis=similarity heuristic (not a fact check)
+  [WARN] low confidence, no close match
+        This configuration ensures that only relevant chunks pass through the filtering process.
+        basis=similarity heuristic (not a fact check)
+  [OK]   faithful summary of the retrieved chunks
+        It's worth noting that when the vector weight (0.4) falls below the threshold (0.5), chunks that rel
+        basis=similarity heuristic (not a fact check)
+  [CITE] cited document [n] is part of the retrieved context
+        In such cases, the system is designed to degrade gracefully by using reroute_on_empty_route, which e
+        basis=citation
+  sentences=8  citation_verified=3  direct_quote=1  summary=2  drift=0  unverified=0  drift_rate=0.0
 
 ------------------------------------------------------------------------------
 EVALUATION
 ------------------------------------------------------------------------------
-  overall_score=0.86  is_passing=True
-  retrieval_recall=1.0 (target=0.7, pass=True)
-  answer_faithfulness=0.95 (target=0.7, pass=True)
+  overall_score=0.8071  is_passing=True
+  retrieval_score_avg=0.6487 (target=0.5, pass=True)
+  retrieval_score_std=0.1012 (target=0.1, pass=False)
+  answer_faithfulness=0.8151 (target=0.7, pass=True)
+  semantic_consistency=0.5674 (target=0.5, pass=True)
+  citation_coverage=0.375 (target=0.45, pass=False)
+  answer_relevance=0.6592 (target=0.5, pass=True)
+  hallucination_rate=0.0 (target=0.15, pass=True)
+  rejection_accuracy=None (target=0.8, pass=None)
+  empty_response=False (target=False, pass=True)
+  response_length=1163 (target={'min': 50, 'max': 2000}, pass=True)
 ```
 
 Illustrative: the wording depends on the model, the retrieved chunks and the scenario profile.
@@ -78,12 +124,11 @@ Illustrative: the wording depends on the model, the retrieved chunks and the sce
 
 ## Overview
 
-whiteBoxRAG is a production-oriented RAG platform that keeps every component on-premises: document parsing, embedding, vector storage, hybrid retrieval, LLM inference, tracing, and evaluation all run locally. It targets teams that need a transparent ("white-box") knowledge assistant without sending data to third-party APIs, while still supporting OpenAI as an alternative LLM provider.
+whiteBoxRAG is derived from productive RAG platform as powerful tools to execute the full pipeline entirely on‑premises: document parsing, embedding, vector storage, hybrid retrieval, LLM inference, tracing and evaluation all operate locally. Designed for teams seeking transparent knowledge assistants, it keeps sensitive data from leaving your environment, with optional OpenAI support as an alternate LLM provider.
 
-The name is the promise: instead of a black box, every stage stays inspectable — the built-in **RAG debugger** shows which chunk supported which sentence and why a document was not retrieved, so failures get diagnosed instead of guessed at.
+Moving beyond opaque black‑box RAG systems, its built‑in **RAG debugger exposes every pipeline stage**. You can map individual answer sentences back to supporting source chunks and diagnose why documents are missing from retrieval results, replacing speculative troubleshooting with concrete root‑cause analysis.
 
-The system ships with a build-free web frontend, a 58-endpoint REST API, scenario-based configuration, sentence-level answer tracing with citation verification, business-scope boundary detection, a rule engine that learns from user feedback, A/B testing for retrieval pipelines, and a built-in evaluation framework.
-
+It ships with a zero‑build web UI, a 58‑endpoint REST API and scenario‑based configuration. Key capabilities cover sentence‑level citation‑verified tracing, business‑scope boundary detection, user‑feedback‑powered rule engine, retrieval‑pipeline A/B testing, and an integrated evaluation framework.
 ## Highlights
 
 | | What you get |
@@ -98,9 +143,9 @@ The system ships with a build-free web frontend, a 58-endpoint REST API, scenari
 
 ## Screenshots
 
-| Tracing panel (business + technical views) | A/B test setup | A/B test results |
-|---|---|---|
-| ![Retrieval tracing panel with per-sentence confidence verdicts](assets/RagTrace.png) | ![A/B test variant configuration](assets/abTest.png) | ![A/B test comparison results](assets/abTest_result.png) |
+| Tracing panel (business + technical views) | A/B test setup | Results with details                                                                       |
+|---|---|--------------------------------------------------------------------------------------------|
+| ![Retrieval tracing panel with per-sentence confidence verdicts](assets/RagTrace.png) | ![A/B test variant configuration](assets/abTest_results.png) | ![Processing Step results](assets/ProcessingStep.png) |                                                     
 | Match verdict, recall summary and per-sentence ✅/⚠️/❌ verdicts; the technical view adds the query-rewrite trace, BM25 vs vector vs fused scores and per-sentence similarity. | Configure retrieval mode, BM25 weight, similarity threshold and `top_k` per variant. | Side-by-side evaluation score, recall count and drift rate, plus averages across variants. |
 
 ## How it compares
@@ -119,7 +164,7 @@ A feature-by-feature bingo against other ecosystems would be unfair and would ag
 ## Key Features
 
 **Lightweight by design**
-- Runs on an 8 GB CPU machine with no Redis, MySQL, or message broker
+- Runs on an 8 GB CPU machine as offline-ai
 - Vectors, documents, logs, traces, and task state stored as local files
 - Minimal dependency surface for fast deployment
 
@@ -485,6 +530,8 @@ The system exposes 59 endpoints across six modules. Interactive documentation is
 | GET | `/api/chat/history/stats` | Get conversation statistics |
 | DELETE | `/api/chat/history/{trace_id}` | Delete a conversation record |
 
+![Hypothesis-mode Q&A with manually selected chunks ] (assets/hypothesis-mode_qa.png)
+
 ### Scenario Management
 
 | Method | Endpoint | Description |
@@ -532,6 +579,8 @@ The system exposes 59 endpoints across six modules. Interactive documentation is
 ### Hybrid Retrieval
 
 The retriever runs BM25 and dense vector search in parallel, then fuses results by a configurable weight (`retriever.bm25_weight`). BM25 indices are built in a background thread with versioning so that re-indexing never blocks incoming queries; a retrieval waits `bm25.build_wait_ms` for an in-flight build, and a route that returned nothing gives up its fusion weight for that query (`retriever.reroute_on_empty_route`) so a missing route can never cap the fused score below `retriever.similarity_threshold`. Retrieved chunks pass through similarity-threshold filtering, optional reranking, and context compression before reaching the LLM.
+![three-way Retrieval](assets/three-way_retrieval.png)
+
 
 ### Boundary Detection
 
@@ -720,4 +769,4 @@ your own data-handling requirements before deploying it against sensitive data.
 Built on [FastAPI](https://fastapi.tiangolo.com/), [LlamaIndex](https://www.llamaindex.ai/),
 [ChromaDB](https://www.trychroma.com/), [Ollama](https://ollama.com/),
 [rank-bm25](https://github.com/dorianbrown/rank_bm25) and [jieba](https://github.com/fxsjy/jieba).
-Architecture and module-level details (Chinese) live in [`docs/ARCHITECTURE_ZH.md`](docs/ARCHITECTURE_ZH.md).
+Architecture and module-level details live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE_ZH.md).

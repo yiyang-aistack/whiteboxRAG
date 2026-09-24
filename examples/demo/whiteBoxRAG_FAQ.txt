@@ -1,58 +1,58 @@
-whiteBoxRAG 产品说明与常见问题（演示知识库）
+whiteBoxRAG Product Overview & FAQ (Demo Knowledge Base)
 
-一、产品定位
+1. Product Positioning
 
-whiteBoxRAG 是一套轻量化、可私有化部署的检索增强生成（RAG）系统，基于 FastAPI、LlamaIndex、ChromaDB 与 Ollama 构建。它的目标是在仅有 8GB 内存的 CPU 机器上运行，不依赖 Redis、MySQL 或消息队列等中间件：向量库（./storage/vectordb）、文档（./storage/documents）、日志（./storage/logs）、溯源记录（./storage/traces）、任务状态（./storage/tasks）与知识库元数据全部以本地文件形式存储。大模型与向量化模型默认都来自本机 Ollama（qwen2.5:7b 与 nomic-embed-text:latest），提供者与密钥统一写在 .env 中；BM25 索引是进程内的内存结构，按需懒加载构建，不单独落盘。
+whiteBoxRAG is a lightweight, on-premise deployable Retrieval-Augmented Generation (RAG) system built on FastAPI, LlamaIndex, ChromaDB and Ollama. It is designed to run on a CPU machine with as little as 8GB of memory, with no external middleware such as Redis, MySQL or message queues: the vector store (./storage/vectordb), documents (./storage/documents), logs (./storage/logs), trace records (./storage/traces), task state (./storage/tasks), and knowledge base metadata are all stored as local files. Both the LLM and the embedding model default to the local Ollama (qwen2.5:7b and nomic-embed-text:latest); providers and keys are configured in .env. The BM25 index is an in-memory process structure that is lazily built on demand and not persisted to disk separately.
 
-二、默认参数与核心指标
+2. Default Parameters & Core Metrics
 
-1. 服务默认监听 8080 端口（HOST 与 PORT 可在 .env 覆盖），健康检查地址是 /api/health。
-2. 默认检索模式是混合检索（retriever.mode 为 hybrid），即 BM25 关键词检索与向量语义检索加权融合；其中 BM25 权重（retriever.bm25_weight）为 0.6，向量权重由 1 减去 BM25 权重推导得到，即 0.4。
-3. 融合分 = BM25 权重 × BM25 得分 + 向量权重 × 向量得分。混合检索默认返回 5 个片段（retriever.top_k），并丢弃融合分低于相似度阈值的候选，该阈值（retriever.similarity_threshold）默认是 0.5；vector_store 段另保留了组件级的 top_k 5 与相似度阈值 0.1，仅在缺少 retriever 配置时作为回退默认值。
-4. 因为向量权重 0.4 低于阈值 0.5，只被向量路命中的片段单靠自己无法越过阈值，启动日志会就此给出权重/阈值组合告警。为此默认开启 reroute_on_empty_route：某一路返回为空（例如重启后 BM25 索引仍在构建）时，它的权重会在当次查询中让给另一路，该降级会记录在 debug_info.route_degraded 与检索漏斗中。
-5. 检索器的重排序数量（rerank_top_k）默认是 10，rerank_enabled 与 query_rewrite_enabled 默认开启；关闭重排时 rerank_top_k 退化为 top_k。
-6. 文档分块大小默认 512 字符，分块重叠默认 128 字符，单个文件上传上限默认 10MB（document_parser.max_file_size）。
-7. 上下文压缩默认开启，压缩后最多 2048 tokens。
-8. API 层共提供 60 个端点（另有 /api/health 健康检查），划分为知识库管理、对话问答、场景管理、质量评估、文档优化、系统监控六个模块。
-9. API 默认限流为每个 IP 每分钟 60 次请求；/static、/api/health、/docs、/openapi.json 与 /redoc 免限流。
+1. The service listens on port 8080 by default (HOST and PORT can be overridden in .env); the health check endpoint is /api/health.
+2. The default retrieval mode is hybrid (retriever.mode = hybrid), a weighted fusion of BM25 keyword retrieval and vector semantic retrieval; the BM25 weight (retriever.bm25_weight) is 0.6, and the vector weight is derived as 1 minus the BM25 weight, i.e. 0.4.
+3. Fusion score = BM25 weight × BM25 score + vector weight × vector score. Hybrid retrieval returns 5 chunks by default (retriever.top_k) and discards candidates whose fusion score is below the similarity threshold; that threshold (retriever.similarity_threshold) defaults to 0.5. The vector_store section also keeps component-level defaults of top_k=5 and similarity_threshold=0.1 as fallbacks when no retriever configuration is present.
+4. Because the vector weight (0.4) is below the threshold (0.5), chunks that hit only on the vector path cannot cross the threshold on their own. The startup log will emit a weight/threshold combination warning for this. reroute_on_empty_route is therefore enabled by default: when one path returns empty (for example the BM25 index is still being built after a restart), its weight is handed over to the other path for that query. This degradation is recorded in debug_info.route_degraded and in the retrieval funnel.
+5. The rerank count of the retriever (rerank_top_k) defaults to 10; rerank_enabled and query_rewrite_enabled are enabled by default. When reranking is disabled, rerank_top_k falls back to top_k.
+6. Default document chunk size is 512 characters, chunk overlap is 128 characters, and the per-file upload limit is 10MB (document_parser.max_file_size).
+7. Context compression is enabled by default, with a maximum of 2048 tokens after compression.
+8. The API layer provides 60 endpoints (plus /api/health), grouped into six modules: knowledge base management, conversational QA, scenario management, quality evaluation, document optimization and system monitoring.
+9. Default API rate limit is 60 requests per IP per minute. /static, /api/health, /docs, /openapi.json and /redoc are exempted from rate limiting.
 
-三、支持的文档格式
+3. Supported Document Formats
 
-默认上传白名单（document_parser.supported_formats）为 PDF、Word（.docx 与 .doc）、纯文本 TXT 与 Markdown（.md），其中文本抽取由 PDF（pdfplumber，缺失时回退 pypdf）、Word（python-docx）与 TXT 三个提取器完成；老式二进制 .doc 的兼容性有限，建议先转存为 .docx。Excel（.xlsx 与 .xls）与 PowerPoint（.pptx）的提取器已经实现（分别依赖 openpyxl 与 python-pptx），但默认不在白名单内，需要先把扩展名加入该配置项才能上传。上传时会先做扩展名校验，再对可识别的格式做文件魔数（MIME/Magic Number）校验，防止把可执行文件伪装成文档；运行环境缺少 libmagic 时会退化为仅扩展名校验并打印告警。
+The default upload whitelist (document_parser.supported_formats) is PDF, Word (.docx and .doc), plain text TXT and Markdown (.md). Text extraction is handled by three extractors: PDF (pdfplumber, falling back to pypdf when missing), Word (python-docx) and TXT. Legacy binary .doc has limited compatibility; convert it to .docx first. Extractors for Excel (.xlsx and .xls) and PowerPoint (.pptx) are implemented (depending on openpyxl and python-pptx respectively) but are not in the default whitelist — add the extensions to that config item to enable uploads. On upload, the system first validates the file extension, then performs a file magic-number (MIME) check on recognised formats to prevent executables from masquerading as documents. When the runtime lacks libmagic, it degrades to extension-only validation with a printed warning.
 
-四、白盒溯源能力
+4. White-box Tracing Capabilities
 
-1. 系统内置句子级溯源，归属分两步：先做引用核验——句子里的 [文档N] 如果指向真正送入本次 Prompt 的分块，就标记为"引用已核验"（依据是引用，属于证据）；没有可用引用时才做相似度启发式判定——把回答句同时与分块内的每个句子（细粒度）和整个分块（粗粒度）比较，取两者最大值。启发式结论分为直接引用、摘要改写、低置信度、无依据推断（含无来源）几档，业务视图把它们归并为三种标签展示：有文档依据（✅，直接引用与摘要改写）、低置信度（⚠️）、无依据推断（❌）。相似度结论始终只是启发式、不是事实核验；溯源组件本身失败（例如 Embedding 不可用）的句子标记为"未核验"，不计入漂移率与幻觉率。
-2. 检索溯源面板分为"业务摘要"和"技术详情"两个视图。业务摘要面向业务管理员：第一屏先给出知识库匹配结论，然后是本次问答总览、检索漏斗（候选 → 阈值过滤 → 压缩 → 进入回答，含被淘汰候选的理由与调参建议）、参考资料召回汇总（含中文化的命中理由）、逐句可信度溯源、智能诊断与优化建议和质量指标。技术详情面向技术人员：展示查询改写流水、BM25、向量与融合三路检索对比、融合计算详情、完整检索参数、句子级相似度数值，以及引用标注校验原文与未召回诊断原始日志。
-3. 漏斗中内置两个白盒动作：按需全库漏召回扫描（POST /api/chat/miss-scan）与假设分析（勾选增删证据片段后重新生成答案，并与原回答并排对比漂移率与句子级取证）。
+1. The system ships with built-in sentence-level attribution, done in two steps. First, citation verification: if [Document N] in an answer sentence points to a chunk that was actually fed into this prompt, it is marked as "citation verified" (evidence based on the citation). Only when no citation is available does the system fall back to a similarity heuristic — it compares the answer sentence against every sentence in the chunk (fine-grained) and the entire chunk (coarse-grained), taking the maximum of the two. The heuristic conclusions range across direct quote, summary rephrasing, low confidence, and unsupported inference (including no source); the business view collapses these into three labels shown to users: evidence-backed (✓, direct quote & summary), low confidence (!), unsupported inference (✗). Similarity-based conclusions are always heuristic hints, not fact checks. Sentences for which the tracing component itself fails (for example embedding backend down) are marked "unverified" and are not counted toward drift rate or hallucination rate.
+2. The retrieval tracing panel has two views: Business Summary and Technical Detail. Business Summary is aimed at business admins: the first screen shows the KB match conclusion, followed by an overall summary of the Q&A session, the retrieval funnel (candidates → threshold filter → compression → entering the answer, with reasons for rejected candidates and tuning suggestions), a retrieval recall summary (with hit reasons), per-sentence confidence tracing, intelligent diagnostics and optimization suggestions, and quality metrics. Technical Detail is aimed at engineers: it shows the query rewrite trace, BM25, vector and fused retrieval comparisons, fusion calculation details, full retrieval parameters, sentence-level similarity scores, citation-annotated source verification, and the raw non-recall diagnostic log.
+3. Two white-box actions are built into the funnel: on-demand full-database non-recall scan (POST /api/chat/miss-scan) and hypothesis analysis (selectively add/remove evidence chunks, regenerate the answer side by side with the original, and compare drift rate and sentence-level evidence attribution).
 
-五、未召回诊断
+5. Non-recall Diagnostics
 
-当用户认为某篇文档本应被检索到却没有出现时，可以查看未召回诊断（recall_diagnostic.enabled 默认开启）。系统按四类根因归因：元数据过滤把它排除、得分刚好低于阈值（卡边）、只有一种检索模式命中它、查询缺少关键词；对潜在未召回的片段还会给出更细的根因标签，例如 Embedding 不匹配、阈值卡边、关键词缺失、部分匹配。全库扫描只在检索结果为空或开启 debug 时自动执行，最多扫 recall_diagnostic.full_scan_limit（默认 500）个片段，也可以点「扫描全库漏召回」按需触发。
+When a user expects a document to be retrieved but it does not appear, they can inspect the non-recall diagnostics (recall_diagnostic.enabled = true by default). The system attributes root causes into four categories: metadata filtering excluded it, score just below the threshold (borderline), only one retrieval mode hit it, or the query is missing keywords. It also provides finer-grained root-cause labels for potentially missed chunks, such as embedding mismatch, borderline threshold, missing keywords, or partial match. A full-database scan runs automatically only when retrieval results are empty or when debug mode is on; it scans at most recall_diagnostic.full_scan_limit (default 500) chunks, or it can be triggered on demand by clicking "Scan full database for missed recalls".
 
-六、质量评估
+6. Quality Evaluation
 
-评估框架为 rubric v2，共十个指标，按四组计分：检索质量（retrieval_score_avg 平均融合分、retrieval_score_std 分数标准差）、有据性（answer_faithfulness 忠实度、semantic_consistency 语义一致性、citation_coverage 引用覆盖率）、相关性（answer_relevance 答案相关性）、安全与格式（hallucination_rate 幻觉率、rejection_accuracy 拒答准确率、empty_response 空响应、response_length 长度）。每个指标先按自己的达标线归一化（数值刚好落在达标线上时恰好得 pass_score 0.7），综合分是这些得分的加权平均（检索 0.15、有据性 0.45、相关性 0.15、安全与格式 0.25，按本次实际可评估的指标重新归一），is_passing 就是同一个综合分加上显式硬门槛（非空响应、幻觉率不超限、可评估权重覆盖不低于 0.6），所以分数与结论不会再互相矛盾。评估结果可以汇编为可分享的报告，通过 POST /api/evaluation/report 生成、GET /api/evaluation/report/{report_id} 取回；分数带 rubric_version，跨版本或跨场景不可直接比较。
+The evaluation framework is rubric v2 with ten metrics grouped into four score categories: retrieval quality (retrieval_score_avg mean fusion score, retrieval_score_std score standard deviation), faithfulness (answer_faithfulness, semantic_consistency, citation_coverage), relevance (answer_relevance), and safety & format (hallucination_rate, rejection_accuracy, empty_response, response_length). Each metric is normalized against its own passing line (a value exactly at the line scores pass_score = 0.7). The overall score is a weighted average of these normalized scores: retrieval 0.15, faithfulness 0.45, relevance 0.15, safety & format 0.25, re-normalized against the actually evaluable metrics of this run. is_passing is the same overall score plus explicit hard gates (non-empty response, hallucination rate within limit, evaluable weight coverage >= 0.6), so the score and the conclusion cannot contradict each other. Evaluation results can be compiled into shareable reports via POST /api/evaluation/report and retrieved via GET /api/evaluation/report/{report_id}. Scores carry a rubric_version and are not directly comparable across versions or scenarios.
 
-七、部署方式
+7. Deployment
 
-1. 一键启动：uv run python main.py --install，脚本会先执行 uv sync --locked 创建 .venv 并安装锁定依赖，随后检查环境并启动服务；日常启动用 uv run python main.py，缺少 .env 时服务会拒绝启动。
-2. 容器部署：使用 deploy/Dockerfile 构建镜像，或直接执行 docker compose up -d，一条命令同时拉起 Ollama、拉取 qwen2.5:7b 与 nomic-embed-text 并启动应用；容器内的 localhost 指向容器自身，所以必须显式传入 OLLAMA_BASE_URL。
-3. 生产模式：使用 Gunicorn 以单 worker、多线程方式运行，例如 uv run gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 api.api:app，或 uv run gunicorn -c deploy/gunicorn.conf.py api.api:app。
+1. One-command startup: uv run python main.py --install. The script runs uv sync --locked first to create a .venv and install the locked dependencies, then performs environment checks and starts the service. For daily use run uv run python main.py. The service refuses to start when .env is missing.
+2. Container deployment: build the image from deploy/Dockerfile, or simply run docker compose up -d which brings up Ollama, pulls qwen2.5:7b and nomic-embed-text, and starts the app in one command. Inside the container, localhost points to the container itself, so OLLAMA_BASE_URL must be passed explicitly.
+3. Production mode: run the app with Gunicorn using single-worker, multi-threaded mode, for example uv run gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 api.api:app, or uv run gunicorn -c deploy/gunicorn.conf.py api.api:app.
 
-八、常见问题
+8. Frequently Asked Questions
 
-问：为什么推荐单 worker 运行？
-答：向量库客户端与 BM25 索引保存在进程内存中，多 worker 会各自复制一份状态，导致不同进程的索引与缓存不一致。
+Q: Why is single-worker operation recommended?
+A: The vector-store client and the BM25 index live in process memory. Multiple workers would each maintain their own copy of the state, leading to inconsistent indexes and caches across processes.
 
-问：没有本地 GPU 可以运行吗？
-答：可以。系统面向 CPU 环境设计，通过 Ollama 运行量化后的 7B 模型（例如 qwen2.5:7b）即可满足中小规模知识库的问答需求；推荐最低配置为 8GB 内存、4 核 CPU 与 20GB 可用磁盘。
+Q: Can it run without a local GPU?
+A: Yes. The system is designed for CPU environments and runs quantized 7B models (for example qwen2.5:7b) via Ollama, which is sufficient for Q&A over small to medium knowledge bases. Recommended minimum: 8GB memory, 4-core CPU, 20GB available disk.
 
-问：数据会离开企业内网吗？
-答：默认不会。文档解析、向量化、检索与生成全部在本地完成；只有显式把 .env 里的 LLM_PROVIDER 或 EMBEDDING_PROVIDER 切换为 openai 时才会调用云端 API，生成与向量化是两个独立的开关。
+Q: Does my data leave the corporate network?
+A: No, by default. Document parsing, embedding, retrieval and generation all happen locally. Cloud APIs are invoked only when LLM_PROVIDER or EMBEDDING_PROVIDER in .env is explicitly switched to openai; generation and embedding are independent switches.
 
-问：相似度高是否就代表这句话一定正确？
-答：不是。只有带 [文档N] 且该文档确实在本次上下文中的句子才算"引用已核验"，属于证据；相似度给出的直接引用、摘要改写、低置信度与无依据推断都只是启发式判定，用于提示人工核查，不是事实核验。溯源组件失败时该句标记为"未核验"，不会被计入漂移率或幻觉率。
+Q: Does high similarity mean the sentence is definitely correct?
+A: No. Only a sentence that carries [Document N] and that document is actually present in the current context counts as "citation verified" — that is evidence. Direct quote, summary rephrasing, low confidence and unsupported inference as returned by similarity are all heuristic hints for manual review, not fact checks. When the tracing component fails, the sentence is marked "unverified" and is not counted toward drift rate or hallucination rate.
 
-问：重启后第一次提问会不会检索不到内容？
-答：不会。BM25 索引按需懒加载，检索会等待进行中的索引构建，最多等待 bm25.build_wait_ms（默认 500 毫秒），超时才降级到剩余检索路；如果某一路最终为空，reroute_on_empty_route（默认开启）会把它的权重让给另一路，避免出现"向量明明召回、却因权重不足被阈值过滤成无相关内容"的情况。
+Q: After a restart, will the first query fail to retrieve anything?
+A: No. The BM25 index is lazily built on demand. Retrieval waits for any in-progress index build, up to bm25.build_wait_ms (default 500 ms), before degrading to the remaining path. If one path eventually returns empty, reroute_on_empty_route (enabled by default) hands its weight over to the other path, preventing the situation where "the vector path clearly recalled content, but it was filtered below the threshold because its weight was too low".

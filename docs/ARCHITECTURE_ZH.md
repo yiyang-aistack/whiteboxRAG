@@ -1,9 +1,9 @@
 # whiteBoxRAG 架构与功能规格说明书
 
-> **版本**: 1.0.0  
-> **定位**: 企业级轻量化私有化 RAG（检索增强生成）系统  
+> **版本**: 1.1.0  
+> **定位**: 企业级轻量化私有化RAG系统配套的调试与跟踪的工具  
 > **适配环境**: 8G 内存 CPU 环境，基于 LlamaIndex + ChromaDB + Ollama  
-> **最后更新**: 2026-09-12
+> **最后更新**: 2026-09-24
 
 > 本文件是**模块级技术规格**，面向开发者与维护者，说明各模块职责、流程与参数。
 > 想快速跑起来、看功能亮点与截图，请读 [README_ZH.md](../README_ZH.md)（English: [README.md](../README.md)）。
@@ -29,7 +29,7 @@
 
 ## 1. 系统概述
 
-whiteBoxRAG 是一套面向企业的轻量化私有化 RAG 系统，核心设计目标：
+whiteBoxRAG 是一套面向企业的轻量化私有化 RAG系统配套的调试与跟踪的工具，核心设计目标：
 
 | 特性 | 说明 |
 |---|---|
@@ -135,11 +135,14 @@ whiteBoxRAG/
 │   │   └── customer_service.yaml
 │   └── synonym_dict.yaml      # 同义词典
 ├── service/                   # 基础服务
-│   ├── logger.py              # 日志管理
-│   ├── monitor.py             # 性能监控
-│   ├── scheduler.py           # 定时任务
-│   ├── text_split.py          # 统一分句器（带字符偏移）
-│   └── async_tasks.py         # 异步任务
+│   ├── logger.py              # 日志管理（结构化、模块分级）
+│   ├── monitor.py             # 性能监控（请求数、响应时间、错误率）
+│   ├── scheduler.py           # 定时任务（默认禁用，文档优化 + 每日分析）
+│   ├── text_split.py          # 统一分句器（带字符偏移，溯源/评估/流式共用）
+│   ├── async_tasks.py         # 异步任务（文档向量化等耗时操作）
+│   ├── rate_limiter.py        # 按 IP 限流（静态资源/健康检查豁免）
+│   ├── i18n.py                # 国际化（zh-CN / en-US，按 Accept-Language）
+│   └── http_encoding.py       # 统一 UTF-8 响应编码
 ├── static/                    # 前端页面
 │   ├── index.html             # 主页面（仅结构 + 内联事件绑定）
 │   ├── ab_test.html           # A/B 测试页面
@@ -366,15 +369,28 @@ whiteBoxRAG/
 
 ### 4.13 未召回诊断 — `recall_diagnostic.py`
 
-诊断哪些文档预期应该被召回但未命中，分析根因：
-- chunk 过大
-- embedding 不匹配
-- 关键词缺失
-- 文档解析失败
+诊断哪些文档预期应该被召回但未命中，分析根因（四类 + 细粒度标签）：
+
+| 粗分类 | 说明 | 细粒度标签 |
+|---|---|---|
+| **metadata 过滤被排除** | 文档元数据（知识库绑定、场景等）不匹配 | `metadata_filtered` |
+| **卡边（borderline）** | 得分刚好低于 `similarity_threshold`，差一点就能进 | `borderline` |
+| **单路命中** | BM25 或向量其中一路命中，但另一路缺失导致融合分无法跨过阈值 | `single_mode_hit` |
+| **关键词缺失** | 查询里没有文档匹配的关键词（BM25 路径零分） | `missing_keywords` |
+
+**关键设计**：
+- 全库扫描异步执行，上限 `recall_diagnostic.full_scan_limit`（默认 500），保护吞吐
+- 仅在检索结果为空或 debug 模式下自动全库扫描；也可由用户在前端点击「🔎 扫描全库漏召回」按需触发
+- 对候选未召回片段标注根因 + 临界程度（离阈值差多少），帮助调参
 
 ### 4.14 规则引擎 — `rule_engine.py`
 
-监控用户反馈模式，自动检测重复问题模式并固化为业务规则。
+将用户反馈转化为可执行、可度量的业务规则：
+
+- **触发阈值**：某模式（错误回答 / 漏召回 / 意图误分类）的反馈累计超过 `rule_engine.min_feedback_count` 后自动固化为一条业务规则
+- **运行时应用**：查询时命中规则后按规则处理（改检索参数、拒答、强制引用检查等），命中与处理日志记录在案
+- **生效率可查**：`/api/chat/rule-effectiveness` 实时返回每条规则的命中间数、命中率、最近一次命中时间，效果不佳的规则可人工下线
+- **批量写盘**：反馈写入先走内存缓冲区，每 10 秒或积累 50 条后 flush，避免高频 I/O 抖动
 
 ### 4.15 溯源管理 — `trace.py`
 
@@ -522,7 +538,7 @@ whiteBoxRAG/
 | `trace` | enabled: true, trace_directory: ./storage/traces |
 | `sentence_tracing` | abs_drift_floor(0.35), abs_summary_floor(0.55), abs_direct_quote_floor(0.75), fine_weight/coarse_weight, summary_percentile(0.75), direct_quote_percentile(0.90), min_adaptive_samples(3) |
 | `contradiction` | enabled: true, relative_tolerance(0.2), absolute_tolerance(0), percent_point_tolerance(5), date_tolerance_days(1), high/medium_severity_ratio, max_results(20), require_shared_topic(true) |
-| `evaluation` | rubric_version(2.0), pass_score(0.7), min_weight_coverage(0.6), weights(有据性 0.45 / 相关性 0.15 / 安全 0.20 / 检索 0.15 / 格式 0.05), target_values（各指标达标线，标定自 storage/traces）, hallucination_sim_floor(0.35), retrieval_gate_ratio(0.3), low_retrieval_cap(0.3), boundary_confidence_min(0.5), boundary_penalty_floor(0.5), report_directory |
+| `evaluation` | rubric_version(2.0), pass_score(0.7), min_weight_coverage(0.6), weights(有据性 0.45 / 检索质量 0.15 / 相关性 0.15 / 安全与格式 0.25), target_values（各指标达标线，标定自 storage/traces）, hallucination_sim_floor(0.35), retrieval_gate_ratio(0.3), low_retrieval_cap(0.3), boundary_confidence_min(0.5), boundary_penalty_floor(0.5), report_directory |
 | `scheduler` | enabled: false（默认禁用定时任务） |
 
 ### 7.2 场景配置

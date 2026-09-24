@@ -158,7 +158,8 @@ def ask(client: httpx.Client, base_url: str, kb_id: str, query: str) -> dict:
     response = client.post(
         f"{base_url}/api/chat/stream",
         json={"kb_id": kb_id, "query": query, "stream": False},
-        headers={"Accept-Language": "zh-CN"},
+        headers={"Accept-Language": "en"},
+        # headers={"Accept-Language": "zh-CN"}, # reply in Chinese
     )
     if response.status_code >= 400:
         fail(f"chat request failed: HTTP {response.status_code} {response.text[:300]}")
