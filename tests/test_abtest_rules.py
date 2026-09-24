@@ -105,12 +105,21 @@ def test_hit_reasons_use_params():
     
     if result['results']:
         hit_reasons = result['results'][0].get('hit_reasons', [])
+        # A route that returned nothing has its fusion weight redistributed for that query, so
+        # the attribution reports the *effective* weights (what the fused score was computed
+        # with) - `debug_info.effective_weights` is the same pair, and the configured 0.7 / 0.3
+        # stay visible in `debug_info.params`.
+        effective = result['debug_info']['effective_weights']
+        assert result['debug_info']['params']['bm25_weight'] == 0.7, "BM25 weight override failed"
+        assert result['debug_info']['params']['vector_weight'] == 0.3, "Vector weight override failed"
         for reason in hit_reasons:
             if reason['type'] == 'score_contribution':
                 print(f"Hit attribution BM25 weight: {reason['value']['bm25_weight']}")
                 print(f"Hit attribution vector weight: {reason['value']['vector_weight']}")
-                assert reason['value']['bm25_weight'] == 0.7, "BM25 weight attribution error"
-                assert reason['value']['vector_weight'] == 0.3, "Vector weight attribution error"
+                assert reason['value']['bm25_weight'] == effective['bm25_weight'], \
+                    "BM25 weight attribution error"
+                assert reason['value']['vector_weight'] == effective['vector_weight'], \
+                    "Vector weight attribution error"
                 print("✅ Hit attribution test passed with custom weights from params")
                 return
     
@@ -172,9 +181,9 @@ def test_rule_effectiveness_persistence():
     
     # Get current state
     report_before = rule_engine.get_rule_effectiveness_report('test_rule_001')
-    print(f"持久化前有效次数: {report_before['effective_count']}")
-    print(f"持久化前无效次数: {report_before['ineffective_count']}")
-    print(f"持久化前平均评估分数: {report_before['avg_evaluation_score']}")
+    print(f"effective_count before persistence: {report_before['effective_count']}")
+    print(f"ineffective_count before persistence: {report_before['ineffective_count']}")
+    print(f"avg_evaluation_score before persistence: {report_before['avg_evaluation_score']}")
     
     # Force persistence before simulating a restart: the rule engine batches writes
     # (flush every 10s or 50 changes), so the counters would still be in memory otherwise.
@@ -185,14 +194,14 @@ def test_rule_effectiveness_persistence():
     
     # Get restored state
     report_after = rule_engine2.get_rule_effectiveness_report('test_rule_001')
-    print(f"\n持久化后有效次数: {report_after['effective_count']}")
-    print(f"\n持久化后无效次数: {report_after['ineffective_count']}")
-    print(f"\n持久化后平均评估分数: {report_after['avg_evaluation_score']}")
+    print(f"\neffective_count after persistence: {report_after['effective_count']}")
+    print(f"ineffective_count after persistence: {report_after['ineffective_count']}")
+    print(f"avg_evaluation_score after persistence: {report_after['avg_evaluation_score']}")
     
-    assert report_after['effective_count'] == 2, "有效次数持久化失败"
-    assert report_after['ineffective_count'] == 1, "无效次数持久化失败"
-    assert abs(report_after['avg_evaluation_score'] - 0.79) < 0.01, "平均评估分数持久化失败"
-    assert report_after['effectiveness_rate'] == 2/3, "生效率计算失败"
+    assert report_after['effective_count'] == 2, "effective_count persistence failed"
+    assert report_after['ineffective_count'] == 1, "ineffective_count persistence failed"
+    assert abs(report_after['avg_evaluation_score'] - 0.79) < 0.01, "avg_evaluation_score persistence failed"
+    assert report_after['effectiveness_rate'] == 2/3, "effectiveness_rate persistence failed"
     
     # Clean up temporary file
     os.unlink(temp_file)
@@ -200,56 +209,56 @@ def test_rule_effectiveness_persistence():
     # Restore original config
     config._config['rule_engine']['rule_file'] = original_rule_file
     
-    print("✅ 规则生效率持久化测试通过")
+    print("✅ Rule effectiveness rate persistence test passed")
 
 
 def test_sentence_tracing_contradiction():
     """Test semantic contradiction detection"""
-    print("\n=== 测试4: 语义矛盾检测 ===")
+    print("\n=== Test 4: Semantic contradiction detection ===")
     
     tracer = SentenceTracer()
     
     # Construct test data containing contradictions
-    answer = "根据文档，退货期限为30天，可以全额退款，不支持部分退款"
+    answer = "Per document, return policy is 7 days to 30 days."
     
     context_results = [
         {
             'id': 'chunk_1',
-            'text': '退货期限为7天，超过7天将不予处理。退款方式为原路径返回，仅支持部分退款，不支持全额退款。',
-            'metadata': {'file_name': '退货政策.txt'}
+            'text': 'Return policy is 7 days to 30 days. Partial refund is supported, not full refund.',
+            'metadata': {'file_name': 'refund_policy.txt'}
         },
         {
             'id': 'chunk_2',
-            'text': '售后服务时间为工作日9:00-18:00，支持电话和在线客服两种方式。',
-            'metadata': {'file_name': '服务指南.txt'}
+            'text': 'Customer service time is 9:00-18:00.',
+            'metadata': {'file_name': 'service_guide.txt'}
         }
     ]
     
     contradictions = tracer.detect_contradictions(answer, context_results)
     
-    print(f"检测到 {len(contradictions)} 个矛盾")
+    print(f"Detected {len(contradictions)} contradictions:")
     for i, contradiction in enumerate(contradictions):
-        print(f"\n矛盾{i+1}:")
-        print(f"  句子: {contradiction['sentence']}")
-        print(f"  类型: {contradiction['type']}")
-        print(f"  严重程度: {contradiction['severity']}")
-        print(f"  源文档值: {contradiction['source_value']}")
-        print(f"  答案值: {contradiction['answer_value']}")
-        print(f"  解释: {contradiction['explanation']}")
+        print(f"\nConflict {i+1}:")
+        print(f"  Sentence: {contradiction['sentence']}")
+        print(f"  Type: {contradiction['type']}")
+        print(f"  Severity: {contradiction['severity']}")
+        print(f"  Source value: {contradiction['source_value']}")
+        print(f"  Answer value: {contradiction['answer_value']}")
+        print(f"  Explanation: {contradiction['explanation']}")
     
     # Verify detection results
     time_contradictions = [c for c in contradictions if c['type'] == 'time_duration']
     status_contradictions = [c for c in contradictions if c['type'] == 'status']
     
-    assert len(time_contradictions) >= 1, "时间矛盾未检测到"
-    assert len(status_contradictions) >= 1, "状态矛盾未检测到"
-    
-    print("✅ 语义矛盾检测测试通过")
+    assert len(time_contradictions) >= 1, "Time contradiction not detected"
+    assert len(status_contradictions) >= 1, "Status contradiction not detected"
+
+    print("✅ Semantic contradiction detection test case passed")
 
 
 def test_ab_test_variant_config():
     """Test A/B test variant config"""
-    print("\n=== 测试5: A/B测试变体配置 ===")
+    print("\n=== Test 5: A/B test variant config ===")
     
     from api.routes.chat import ABTestRequest, ABTestVariant
     from pydantic import ValidationError
@@ -258,17 +267,17 @@ def test_ab_test_variant_config():
     try:
         request = ABTestRequest(
             kb_id='test_kb',
-            query='如何申请退款',
+            query='How to apply for refund?',
             variants=[
                 ABTestVariant(
-                    name='变体A',
+                    name='Variant A',
                     retrieval_mode='hybrid',
                     bm25_weight=0.4,
                     similarity_threshold=0.3,
                     top_k=5
                 ),
                 ABTestVariant(
-                    name='变体B',
+                    name='Variant B',
                     retrieval_mode='vector',
                     bm25_weight=0.2,
                     similarity_threshold=0.5,
@@ -276,37 +285,37 @@ def test_ab_test_variant_config():
                 )
             ]
         )
-        print(f"变体数量: {len(request.variants)}")
+        print(f"Variant count in request: {len(request.variants)}")
         for variant in request.variants:
             print(f"  {variant.name}: mode={variant.retrieval_mode}, bm25_weight={variant.bm25_weight}, threshold={variant.similarity_threshold}, top_k={variant.top_k}")
-        print("✅ A/B测试配置验证通过")
+        print("✅ A/B test variant config validation passed")
     except ValidationError as e:
-        print(f"❌ 配置验证失败: {e}")
+        print(f"❌ A/B test variant config validation failed: {e}")
         raise
     
     # Test boundary: fewer than 2 variants
     try:
         ABTestRequest(
             kb_id='test_kb',
-            query='测试',
-            variants=[ABTestVariant(name='变体A')]
+            query='Test',
+            variants=[ABTestVariant(name='Variant A')]
         )
-        print("❌ 应该拒绝少于2个变体的配置")
+        print("❌ Should reject fewer than 2 variants")
     except ValidationError:
-        print("✅ 正确拒绝了少于2个变体的配置")
+        print("✅ Correctly rejected fewer than 2 variants")
 
 
 def test_ab_test_comparison_logic():
     """Test A/B test comparison logic"""
-    print("\n=== 测试6: A/B测试对比逻辑 ===")
+    print("\n=== Test 6: A/B test comparison logic ===")
     
     from api.routes.chat import _compare_results
     
     # Construct mock results
     mock_results = [
         {
-            'name': '变体A',
-            'answer': '这是一个较长的回答内容，包含详细的解释和说明',
+            'name': 'Variant A',
+            'answer': 'Long answer with detailed explanation and details',
             'context': [{'text': 'doc1'}, {'text': 'doc2'}, {'text': 'doc3'}],
             'context_count': 3,
             'evaluation': {'overall_score': 0.85},
@@ -314,8 +323,8 @@ def test_ab_test_comparison_logic():
             'contradiction_count': 0
         },
         {
-            'name': '变体B',
-            'answer': '简短回答',
+            'name': 'Variant B',
+            'answer': 'Short answer',
             'context': [{'text': 'doc1'}],
             'context_count': 1,
             'evaluation': {'overall_score': 0.72},
@@ -323,8 +332,8 @@ def test_ab_test_comparison_logic():
             'contradiction_count': 1
         },
         {
-            'name': '变体C',
-            'answer': '中等长度的回答',
+            'name': 'Variant C',
+            'answer': 'Medium length answer',
             'context': [{'text': 'doc1'}, {'text': 'doc2'}],
             'context_count': 2,
             'evaluation': {'overall_score': 0.91},
@@ -335,27 +344,27 @@ def test_ab_test_comparison_logic():
     
     comparison = _compare_results(mock_results)
     
-    print(f"最佳评估: {comparison['best_by_evaluation']['name']} ({comparison['best_by_evaluation']['score']})")
-    print(f"最佳召回: {comparison['best_by_recall']['name']} ({comparison['best_by_recall']['count']})")
-    print(f"最佳漂移率: {comparison['best_by_drift_rate']['name']} ({comparison['best_by_drift_rate']['drift_rate']})")
+    print(f"Best evaluation: {comparison['best_by_evaluation']['name']} ({comparison['best_by_evaluation']['score']})")
+    print(f"Best recall: {comparison['best_by_recall']['name']} ({comparison['best_by_recall']['count']})")
+    print(f"Best drift rate: {comparison['best_by_drift_rate']['name']} ({comparison['best_by_drift_rate']['drift_rate']})")
     
-    print(f"\n统计摘要:")
+    print(f"\nStatistics summary:")
     summary = comparison['summary']
-    print(f"  平均答案长度: {summary['avg_answer_length']:.0f}")
-    print(f"  平均召回数量: {summary['avg_context_count']:.1f}")
-    print(f"  平均评估分数: {summary['avg_evaluation_score']:.3f}")
-    print(f"  平均漂移率: {summary['avg_drift_rate']:.2f}")
+    print(f"  Average answer length: {summary['avg_answer_length']:.0f}")
+    print(f"  Average recall count: {summary['avg_context_count']:.1f}")
+    print(f"  Average evaluation score: {summary['avg_evaluation_score']:.3f}")
+    print(f"  Average drift rate: {summary['avg_drift_rate']:.2f}")
     
-    assert comparison['best_by_evaluation']['name'] == '变体C', "最佳评估判断错误"
-    assert comparison['best_by_recall']['name'] == '变体A', "最佳召回判断错误"
-    assert comparison['best_by_drift_rate']['name'] == '变体C', "最佳漂移率判断错误"
+    assert comparison['best_by_evaluation']['name'] == 'Variant C', "Best evaluation judgment error"
+    assert comparison['best_by_recall']['name'] == 'Variant A', "Best recall judgment error"
+    assert comparison['best_by_drift_rate']['name'] == 'Variant C', "Best drift rate judgment error"
     
-    print("✅ A/B测试对比逻辑测试通过")
+    print("✅ A/B test comparison logic test passed")
 
 
 if __name__ == '__main__':
     print("=" * 70)
-    print("A/B测试和规则生效验证 Mock 测试")
+    print("A/B test and rule effectiveness persistence Mock Test")
     print("=" * 70)
     
     test_retriever_params_override()
@@ -366,5 +375,5 @@ if __name__ == '__main__':
     test_ab_test_comparison_logic()
     
     print("\n" + "=" * 70)
-    print("所有测试通过！")
+    print("✅ All tests passed")
     print("=" * 70)

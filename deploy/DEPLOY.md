@@ -9,7 +9,8 @@
 - **系统**: Ubuntu 20.04+ / Windows 10+ / macOS 12+
 
 ### 软件依赖
-- **Python**: 3.12+
+- **Python**: 3.12+（版本由 `.python-version` 固定，uv 也可自行安装解释器）
+- **uv**: 0.10+（依赖与虚拟环境管理；`pip install uv`，详见 https://docs.astral.sh/uv/）
 - **Ollama**: 0.1.25+（已运行并加载模型）
 
 ## 快速部署
@@ -24,23 +25,21 @@ cd whiteBoxRAG
 bash deploy/start.sh dev
 
 # 或分步执行
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn api.api:app --host 0.0.0.0 --port 8080
+uv sync                                  # 创建 .venv 并安装 uv.lock 锁定的依赖
+uv run python -m uvicorn api.api:app --host 0.0.0.0 --port 8080
 ```
 
 ### 方式二：Gunicorn生产模式
 
 ```bash
-# 安装依赖
-pip install -r requirements.txt
+# 安装依赖（生产环境不需要 dev 依赖组）
+uv sync --locked --no-dev
 
 # 启动服务
-gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 api.api:app
+uv run gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 api.api:app
 
 # 或使用配置文件
-gunicorn -c deploy/gunicorn.conf.py api.api:app
+uv run gunicorn -c deploy/gunicorn.conf.py api.api:app
 ```
 
 ### 方式三：Docker Compose 一键启动（推荐）
@@ -134,11 +133,14 @@ ollama:
   embedding_model: "nomic-embed-text"  # Embedding模型
   base_url: "http://localhost:11434"
 
-# 检索配置
+# 检索配置（混合检索默认值的唯一来源；前端默认值由此接口下发给页面）
 retriever:
   mode: "hybrid"               # 检索模式: vector/bm25/hybrid
-  bm25_weight: 0.4             # BM25权重
-  similarity_threshold: 0.3     # 相似度阈值
+  bm25_weight: 0.4             # BM25权重（向量权重 = 1 - 该值）
+  top_k: 5                     # 送入 Prompt 的片段数量
+  similarity_threshold: 0.1    # 相似度阈值
+  query_rewrite_enabled: true  # 是否执行查询改写
+  rerank_enabled: true         # 是否执行重排
 
 # 文档处理
 document_parser:
@@ -302,7 +304,8 @@ whiteBoxRAG/
 │   ├── gunicorn.conf.py
 │   └── start.sh
 ├── tests/                   # 单元测试
-├── requirements.txt
+├── pyproject.toml           # 依赖声明（运行依赖 + dev 依赖组）
+├── uv.lock                  # 锁定依赖版本（提交）
 └── README.md
 ```
 

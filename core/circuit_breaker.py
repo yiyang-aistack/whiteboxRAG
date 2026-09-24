@@ -5,7 +5,7 @@ State: closed(normal) -> open(circuit breaker) -> half_open(half-open detection)
 """
 import time
 from enum import Enum
-from threading import Lock
+from threading import Lock, RLock
 from typing import Callable, Dict, Optional, Any
 
 from config import config
@@ -37,7 +37,9 @@ class CircuitBreaker:
         self._total_requests = 0
         self._last_failure_time = 0
         self._last_reset_time = 0
-        self._lock = Lock()
+        # Reentrant on purpose: call() holds the lock while it calls _reset() on recovery.
+        # A plain Lock would deadlock that thread forever and freeze every later LLM call.
+        self._lock = RLock()
 
     def _reset(self):
         """Reset circuit breaker state"""

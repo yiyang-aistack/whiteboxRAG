@@ -64,6 +64,17 @@ class ScheduledTaskManager:
             self._is_running = False
             logger.info("Scheduled task scheduler stopped successfully.")
 
+    @staticmethod
+    def _next_run_time(job) -> Optional[str]:
+        """Read a job's next fire time as an ISO string, or None if it is not scheduled yet.
+
+        APScheduler only attaches `next_run_time` to a job while the scheduler is running;
+        on a pending (not yet started) job the attribute does not exist at all, so a direct
+        `job.next_run_time` raises AttributeError. Read it through getattr everywhere.
+        """
+        next_run = getattr(job, 'next_run_time', None)
+        return next_run.isoformat() if next_run else None
+
     def add_document_optimization_task(self, cron_expression: str = "0 2 * * *"):
         """
         Add document optimization task.
@@ -101,7 +112,10 @@ class ScheduledTaskManager:
             'id': "document_optimization",
             'name': "Document optimization",
             'cron_expression': cron_expression,
-            'next_run_time': job.next_run_time.isoformat() if job.next_run_time else None
+            # A job added to a not-yet-started scheduler has no `next_run_time` attribute
+            # at all (APScheduler only sets it once the scheduler is running), so a plain
+            # attribute access raises AttributeError. getattr keeps this safe either way.
+            'next_run_time': self._next_run_time(job)
         }
 
         logger.info(f"  Scheduled task: Document optimization, Cron: {cron_expression}")
@@ -149,7 +163,8 @@ class ScheduledTaskManager:
             'id': "daily_analysis",
             'name': "Daily document analysis",
             'cron_expression': cron_expression,
-            'next_run_time': job.next_run_time.isoformat() if job.next_run_time else None
+            # See add_document_optimization_task: the attribute may not exist yet.
+            'next_run_time': self._next_run_time(job)
         }
 
         logger.info(f"  Scheduled task: Daily document analysis, Cron: {cron_expression}")
@@ -165,7 +180,7 @@ class ScheduledTaskManager:
                 'id': job.id,
                 'name': job.name,
                 'trigger': str(job.trigger),
-                'next_run_time': job.next_run_time.isoformat() if job.next_run_time else None,
+                'next_run_time': self._next_run_time(job),
                 'status': 'running' if self._is_running else 'stopped'
             })
 
@@ -244,6 +259,12 @@ def init_scheduled_tasks():
     if scheduler_config.get('enabled', False):
         logger.info("Scheduled task manager enabled.")
 
+        # Start before registering jobs. A job added to a not-yet-started scheduler is
+        # "pending" and has no next_run_time, so the task registry would report None for
+        # every entry. Adding jobs to a running scheduler is supported and gives each one
+        # its real next fire time.
+        scheduler_manager.start()
+
         if scheduler_config.get('document_optimization_enabled', False):
             cron_expr = scheduler_config.get('document_optimization_cron', "0 2 * * *")
             scheduler_manager.add_document_optimization_task(cron_expr)
@@ -251,7 +272,5 @@ def init_scheduled_tasks():
         if scheduler_config.get('daily_analysis_enabled', False):
             cron_expr = scheduler_config.get('daily_analysis_cron', "0 8 * * *")
             scheduler_manager.add_daily_analysis_task(cron_expr)
-
-        scheduler_manager.start()
     else:
         logger.info("Scheduled task manager disabled.")

@@ -53,7 +53,7 @@ async def get_stats(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"获取性能统计失败: {e}", exc_info=True)
+        logger.error(f"Failed to get stats: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('monitor.stats_failed', lang)}: {str(e)}"
@@ -112,7 +112,7 @@ async def get_logs(
         }
 
     except Exception as e:
-        logger.error(f"查询日志失败: {e}", exc_info=True)
+        logger.error(f"Failed to query logs: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('monitor.logs_query_failed', lang)}: {str(e)}"
@@ -136,7 +136,7 @@ async def list_tasks(
         }
 
     except Exception as e:
-        logger.error(f"获取任务列表失败: {e}", exc_info=True)
+        logger.error(f"Failed to get task list: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('monitor.tasks_failed', lang)}: {str(e)}"
@@ -164,7 +164,7 @@ async def get_task(task_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取任务详情失败: {e}", exc_info=True)
+        logger.error(f"Failed to get task details: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('monitor.task_detail_failed', lang)}: {str(e)}"
@@ -183,7 +183,7 @@ async def reset_stats(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"重置统计失败: {e}", exc_info=True)
+        logger.error(f"Failed to reset stats: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('monitor.stats_reset_failed', lang)}: {str(e)}"

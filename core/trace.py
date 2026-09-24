@@ -2,7 +2,9 @@
 RAG full-link tracing module
 Defines unified RAGTrace data structure, spanning parsing, rewriting, retrieval, and generation full link
 """
+import glob
 import json
+import os
 import time
 import uuid
 from datetime import datetime
@@ -27,11 +29,14 @@ class RAGTrace:
         self.intent_info: Optional[Dict] = None
         self.final_answer: Optional[str] = None
         self.sentence_tracing: Optional[List[Dict]] = None
+        self.contradictions: Optional[List[Dict]] = None
         self.evaluation: Optional[Dict] = None
         self.error: Optional[str] = None
         self.kb_id: Optional[str] = None
         self.query: Optional[str] = None
         self.scenario_id: Optional[str] = None
+        # Terminal status of the request, e.g. 'completed' or 'boundary_rejected'.
+        self.status: Optional[str] = None
 
     def add_stage(self, stage_name: str, input_data: Dict, output_data: Dict, details: Optional[Dict] = None):
         """
@@ -63,6 +68,10 @@ class RAGTrace:
         """Set sentence-level tracing"""
         self.sentence_tracing = sentence_tracing
 
+    def set_contradictions(self, contradictions: List[Dict]):
+        """Set the answer/source contradictions found by core/contradiction.py"""
+        self.contradictions = contradictions
+
     def set_evaluation(self, evaluation: Dict):
         """Set evaluation result"""
         self.evaluation = evaluation
@@ -81,6 +90,19 @@ class RAGTrace:
         """Finish tracing, record end time"""
         self.end_time = time.time()
 
+    def mark_complete(self, status: str = 'completed'):
+        """Mark the trace as finished with a terminal status and stop the timer.
+
+        Used by early-exit paths (e.g. a boundary rejection) that return before the normal
+        end of the pipeline.
+
+        Args:
+            status: Terminal status, e.g. 'completed' or 'boundary_rejected'
+        """
+        self.status = status
+        if self.end_time is None:
+            self.end_time = time.time()
+
     @property
     def duration(self) -> float:
         """Calculate total duration"""
@@ -95,6 +117,7 @@ class RAGTrace:
             'kb_id': self.kb_id,
             'query': self.query,
             'scenario_id': self.scenario_id,
+            'status': self.status,
             'start_time': self.start_time,
             'end_time': self.end_time,
             'duration': self.duration,
@@ -102,6 +125,7 @@ class RAGTrace:
             'stages': self.stages,
             'final_answer': self.final_answer,
             'sentence_tracing': self.sentence_tracing,
+            'contradictions': self.contradictions,
             'evaluation': self.evaluation,
             'error': self.error,
             'created_at': datetime.now().isoformat()
@@ -131,8 +155,14 @@ class TraceManager:
         return self._active_traces.get(trace_id)
 
     def save_trace(self, trace: RAGTrace):
-        """Save trace record to file"""
+        """Save trace record to file and drop it from the in-memory map.
+
+        Everything needed afterwards is in the file, so keeping the object alive only leaked
+        memory: each trace holds its stages, the whole retrieved context and the final answer,
+        and nothing ever removed the entry, so a long-running process grew by one trace per query.
+        """
         trace.finish()
+        self._active_traces.pop(trace.trace_id, None)
         trace_file = self.trace_dir / f'{sanitize_filename(trace.trace_id)}.json'
         try:
             with open(trace_file, 'w', encoding='utf-8') as f:
@@ -156,11 +186,13 @@ class TraceManager:
                 trace.intent_info = data.get('intent_info')
                 trace.final_answer = data.get('final_answer')
                 trace.sentence_tracing = data.get('sentence_tracing')
+                trace.contradictions = data.get('contradictions')
                 trace.evaluation = data.get('evaluation')
                 trace.error = data.get('error')
                 trace.kb_id = data.get('kb_id')
                 trace.query = data.get('query')
                 trace.scenario_id = data.get('scenario_id')
+                trace.status = data.get('status')
                 return trace
             except Exception as e:
                 logger.error(f"Failed to load trace record for {trace_id}: {e}")
@@ -168,7 +200,6 @@ class TraceManager:
 
     def cleanup(self, max_retention_days: int = 30):
         """Clean up expired trace records"""
-        import glob
         cutoff_time = time.time() - max_retention_days * 24 * 3600
         trace_files = glob.glob(str(self.trace_dir / '*.json'))
         deleted_count = 0
@@ -179,7 +210,5 @@ class TraceManager:
         if deleted_count > 0:
             logger.info(f"Deleted {deleted_count} expired trace records")
 
-
-import os
 
 trace_manager = TraceManager()

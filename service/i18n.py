@@ -79,6 +79,7 @@ _TRANSLATIONS = {
         'kb.parse_start': '开始解析文档',
         'kb.parse_done': '解析完成，共 {} 个分块，开始向量化',
         'kb.process_done': '处理完成，成功添加 {} 个向量',
+        'kb.binary_preview': '[此文件为二进制格式 ({})，不支持直接以文本方式预览，请使用对应的文件查看器打开]',
 
         # ===== Chat =====
         'chat.query_empty': '查询不能为空',
@@ -87,6 +88,7 @@ _TRANSLATIONS = {
         'chat.trace_id_required': '缺少trace_id参数',
         'chat.health_failed': '健康检查失败',
         'chat.simulate_failed': '模拟问答服务异常: {}',
+        'chat.miss_scan_failed': '漏召回扫描失败: {}',
         'chat.service_error': '问答服务异常: {}',
         'chat.trace_get_failed': '获取溯源信息失败: {}',
         'chat.feedback_failed': '处理用户反馈失败: {}',
@@ -98,6 +100,7 @@ _TRANSLATIONS = {
         'chat.history_get_failed': '获取对话历史失败: {}',
         'chat.stats_get_failed': '获取对话统计失败: {}',
         'chat.conversation_not_found': '对话记录不存在',
+        'chat.conversation_delete_success': '对话记录已删除',
         'chat.conversation_delete_failed': '删除对话记录失败: {}',
 
         # ===== A/B Test =====
@@ -143,7 +146,7 @@ _TRANSLATIONS = {
         # ===== API Common Extended =====
         'api.server_error': '服务器内部错误',
         'api.rate_limit_exceeded': '请求过于频繁，每分钟限制 {} 次，请稍后重试',
-        'api.app_description': '企业级轻量化私有化RAG系统',
+        'api.app_description': '私有化RAG系统调试',
         'api.app_starting': '启动 {} v{}',
         'api.app_env': '环境: {}',
         'api.llm_ready': 'LLM服务就绪，模型: {}',
@@ -252,6 +255,7 @@ _TRANSLATIONS = {
         'eval.boundary_low': '边界检测置信度低 ({})，综合分从 {} 调整至 {}',
         'eval.boundary_low_confidence': '边界置信度低({})，分数已调整',
         'eval.retrieval_quality_low': '检索质量低，分数已封顶',
+        'eval.no_context': '未检索到任何上下文，无法评估答案质量',
 
         # ===== Core - Sentence Tracing =====
         'trace.drift_embedding_failed': '无法获取句子Embedding',
@@ -262,7 +266,15 @@ _TRANSLATIONS = {
         'trace.citation_low_confidence': '低置信度',
         'trace.citation_drift': '无依据推断',
         'trace.citation_no_source': '无来源',
+        'trace.citation_citation_verified': '引用已核验',
+        'trace.citation_unverified': '未核验',
         'trace.citation_unknown': '未知',
+
+        # ===== Core - Contradiction detection =====
+        # {:.0%} is a str.format spec; the value passed is a ratio (0.33 -> 33%).
+        'contradiction.value_mismatch': '答案写为 {}，原文写为 {}（相对偏差 {:.0%}）',
+        'contradiction.date_mismatch': '答案日期为 {}，原文为 {}（相差 {} 天）',
+        'contradiction.status_mismatch': '答案称「{}」，原文明确为「{}」',
 
         # ===== Core - Recall Diagnostic =====
         'recall.meta_filter_title': '元数据过滤分析',
@@ -345,6 +357,7 @@ _TRANSLATIONS = {
         'kb.parse_start': 'Starting document parsing',
         'kb.parse_done': 'Parsing done, {} chunks, starting vectorization',
         'kb.process_done': 'Processing done, {} vectors added',
+        'kb.binary_preview': '[This file is a binary format ({}); it cannot be previewed as text - please open it with a matching viewer]',
 
         # ===== Chat =====
         'chat.query_empty': 'Query cannot be empty',
@@ -353,6 +366,7 @@ _TRANSLATIONS = {
         'chat.trace_id_required': 'Missing trace_id parameter',
         'chat.health_failed': 'Health check failed',
         'chat.simulate_failed': 'Simulated chat service error: {}',
+        'chat.miss_scan_failed': 'Miss scan failed: {}',
         'chat.service_error': 'Chat service error: {}',
         'chat.trace_get_failed': 'Failed to get trace info: {}',
         'chat.feedback_failed': 'Failed to process feedback: {}',
@@ -364,6 +378,7 @@ _TRANSLATIONS = {
         'chat.history_get_failed': 'Failed to get conversation history: {}',
         'chat.stats_get_failed': 'Failed to get conversation stats: {}',
         'chat.conversation_not_found': 'Conversation not found',
+        'chat.conversation_delete_success': 'Conversation deleted',
         'chat.conversation_delete_failed': 'Failed to delete conversation: {}',
 
         # ===== A/B Test =====
@@ -518,6 +533,7 @@ _TRANSLATIONS = {
         'eval.boundary_low': 'Low boundary detection confidence ({}), overall score adjusted from {} to {}',
         'eval.boundary_low_confidence': 'Low boundary confidence ({}), score adjusted',
         'eval.retrieval_quality_low': 'Low retrieval quality, score capped',
+        'eval.no_context': 'No context was retrieved, so the answer quality cannot be evaluated',
 
         # ===== Core - Sentence Tracing =====
         'trace.drift_embedding_failed': 'Failed to get sentence embedding',
@@ -528,7 +544,15 @@ _TRANSLATIONS = {
         'trace.citation_low_confidence': 'Low Confidence',
         'trace.citation_drift': 'Unsubstantiated Inference',
         'trace.citation_no_source': 'No Source',
+        'trace.citation_citation_verified': 'Citation Verified',
+        'trace.citation_unverified': 'Unverified',
         'trace.citation_unknown': 'Unknown',
+
+        # ===== Core - Contradiction detection =====
+        # {:.0%} is a str.format spec; the value passed is a ratio (0.33 -> 33%).
+        'contradiction.value_mismatch': 'The answer says {} while the source says {} ({:.0%} difference)',
+        'contradiction.date_mismatch': 'The answer dates it {} while the source says {} ({} days apart)',
+        'contradiction.status_mismatch': 'The answer states "{}" while the source states "{}"',
 
         # ===== Core - Recall Diagnostic =====
         'recall.meta_filter_title': 'Metadata Filter Analysis',
@@ -554,8 +578,15 @@ _TRANSLATIONS = {
 }
 
 
-# Default language
-_DEFAULT_LANG = 'zh-CN'
+# Default language for backend-side translation calls (logs, exceptions, internal messages).
+# Resolved from config.system.default_lang so operators can switch the backend log language
+# via settings.yaml or the DEFAULT_LANG env var. API responses are unaffected — they use
+# get_lang_from_request() which reads the client Accept-Language header / ?lang= query param.
+try:
+    from config import config as _config
+    _DEFAULT_LANG = _config.get('system.default_lang', 'zh-CN')
+except Exception:
+    _DEFAULT_LANG = 'zh-CN'
 
 
 def get_lang_from_request(request: Optional[Request] = None, explicit_lang: Optional[str] = None) -> str:

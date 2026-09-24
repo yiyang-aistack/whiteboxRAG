@@ -1,14 +1,14 @@
 #!/bin/bash
-# whiteBoxRAG 启动脚本
+# whiteBoxRAG Startup Script
 
-# 配置
+# Configuration
 APP_NAME="whiteBoxRAG"
 HOST="0.0.0.0"
 PORT=${PORT:-8080}
 WORKERS=${WORKERS:-1}
 LOG_LEVEL=${LOG_LEVEL:-info}
 
-# 颜色输出
+# Color Print Configuration
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -26,84 +26,75 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# 检查Python版本
-check_python() {
-    if command -v python3 &> /dev/null; then
-        PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
-        log_info "Python版本: $PYTHON_VERSION"
+# Check uv Installation
+check_uv() {
+    if command -v uv &> /dev/null; then
+        log_info "uv version: $(uv --version)"
     else
-        log_error "未找到Python3，请先安装Python 3.12+"
+        log_error "uv not found, please install uv, please install uv first:"
+        echo "  - macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh"
+        echo "  - Any platform:     pip install uv"
         exit 1
     fi
 }
 
-# 检查Ollama服务
+# Check Ollama Service by default
 check_ollama() {
-    log_info "检查Ollama服务..."
+    log_info "Checking Ollama Service..."
     if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-        log_info "Ollama服务正常"
+        log_info "Ollama Service is running"
 
-        # 检查模型
+        # Check models
         MODELS=$(curl -s http://localhost:11434/api/tags | grep -o '"name":"[^"]*"' | wc -l)
         if [ "$MODELS" -eq 0 ]; then
-            log_warn "未检测到Ollama模型，请运行以下命令下载："
+            log_warn "No Ollama models detected, please run the following commands to download them:"
             echo "  - ollama pull qwen2.5:7b"
             echo "  - ollama pull nomic-embed-text:latest"
         else
-            log_info "已安装 $MODELS 个模型"
+            log_info "Installed $MODELS models"
         fi
     else
-        log_error "Ollama服务未运行，请先启动Ollama："
-        echo "  - 在后台运行: ollama serve"
+        log_error "Ollama Service is not running, please start Ollama first by:"
+        echo "  - In the background: ollama serve"
         exit 1
     fi
 }
 
-# 安装依赖
+# Install dependencies
+# uv sync: create .venv and install locked versions
 install_deps() {
-    if [ ! -f "requirements.txt" ]; then
-        log_error "未找到requirements.txt"
+    if [ ! -f "pyproject.toml" ] || [ ! -f "uv.lock" ]; then
+        log_error "No pyproject.toml / uv.lock found, please run this script from the main project root directory."
         exit 1
     fi
 
-    log_info "安装Python依赖..."
+    log_info "Running uv sync --locked..."
+    uv sync --locked
 
-    # 检查虚拟环境
-    if [ -z "$VIRTUAL_ENV" ]; then
-        if [ ! -d "venv" ]; then
-            log_info "创建虚拟环境..."
-            python3 -m venv venv
-        fi
-        source venv/bin/activate
-    fi
-
-    pip install --upgrade pip
-    pip install -r requirements.txt
-
-    log_info "依赖安装完成"
+    log_info "Dependencies synchronized to .venv"
 }
 
-# 创建存储目录
+# Create storage directories
 create_dirs() {
-    log_info "创建存储目录..."
+    log_info "Creating storage directories..."
     mkdir -p storage/vectordb
     mkdir -p storage/documents
     mkdir -p storage/logs
     mkdir -p storage/tasks
     mkdir -p storage/monitor
     mkdir -p storage/traces
-    log_info "存储目录创建完成"
+    log_info "Storage directories created"
 }
 
-# 启动服务
+# Start server
 start_server() {
-    log_info "启动 $APP_NAME 服务..."
-    log_info "监听地址: http://$HOST:$PORT"
-    log_info "前端地址: http://$HOST:$PORT/static/index.html"
+    log_info "Starting $APP_NAME server..."
+    log_info "Listening address: http://$HOST:$PORT"
+    log_info "Frontend address: http://$HOST:$PORT/static/index.html"
 
-    # 使用uvicorn开发模式启动
-    # 生产环境建议使用gunicorn
-    python3 -m uvicorn api.api:app \
+    # Start uvicorn development mode
+    # Production environment recommends gunicorn
+    uv run python -m uvicorn api.api:app \
         --host $HOST \
         --port $PORT \
         --workers $WORKERS \
@@ -111,14 +102,14 @@ start_server() {
         --access-log
 }
 
-# 主函数
+# Main Function
 main() {
     echo "========================================"
-    echo " $APP_NAME 企业级私有化RAG系统"
+    echo " $APP_NAME on-Prime RAG System"
     echo "========================================"
     echo ""
 
-    check_python
+    check_uv
     check_ollama
     create_dirs
 
@@ -128,7 +119,7 @@ main() {
         install_deps
         start_server
     else
-        # 直接启动
+        # Start server
         start_server
     fi
 }

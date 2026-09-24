@@ -6,9 +6,10 @@
 
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
+![uv](https://img.shields.io/badge/dependencies-uv%20%2B%20uv.lock-261230)
 ![stack](https://img.shields.io/badge/FastAPI%20%7C%20LlamaIndex%200.10%20%7C%20ChromaDB-009688)
 ![LLM](https://img.shields.io/badge/LLM-Ollama--local-black)
-![API](https://img.shields.io/badge/REST%20API-58%20endpoints-6E4AFF)
+![API](https://img.shields.io/badge/REST%20API-59%20endpoints-6E4AFF)
 ![RAG debugger](https://img.shields.io/badge/built--in-RAG%20debugger-blueviolet)
 ![tests](https://img.shields.io/badge/tests-pytest%20%2B%20GitHub%20Actions-0A9EDC)
 
@@ -19,9 +20,15 @@
 ```bash
 ollama pull qwen2.5:7b && ollama pull nomic-embed-text   # 一次性模型下载（约 5GB）
 
-python main.py --install        # 终端 1：检查环境 + 安装依赖 + 启动服务（:8080）
-python scripts/seed_demo.py     # 终端 2：建演示知识库、提问并打印逐句溯源结果
+cp .env.example .env            # 运行环境配置，必须执行：缺少 .env 时服务会拒绝启动
+uv sync                         # 终端 1：创建 .venv 并安装 uv.lock 锁定的依赖
+uv run python main.py           #          环境检查后启动服务（http://localhost:8080）
+uv run python scripts/seed_demo.py   # 终端 2：建演示知识库、提问并打印逐句溯源结果
 ```
+
+还没装 uv？先装一次（`pip install uv`、`winget install --id=astral-sh.uv -e` 或
+`curl -LsSf https://astral.sh/uv/install.sh | sh`）。`uv run python main.py --install` 会代为执行
+`uv sync`；依赖版本由 `uv.lock` 锁定，换机器结果一致。
 
 然后打开 <http://localhost:8080>。想用容器？`docker compose up -d` 一条命令即可拉起 Ollama、拉取模型并启动应用，见 [容器部署](#容器部署)。
 
@@ -39,9 +46,10 @@ ANSWER
 ------------------------------------------------------------------------------
 SENTENCE-LEVEL TRACING (the white-box part)
 ------------------------------------------------------------------------------
-  [OK]   direct evidence in the retrieved chunks
-        混合检索默认启用，BM25 的默认权重为 0.4，向量权重为 0.6。
-  sentences=3  direct_quote=2  summary=1  drift=0  drift_rate=0.0
+  [CITE] cited document [n] is part of the retrieved context
+        混合检索默认启用，BM25 的默认权重为 0.4，向量权重为 0.6。[1]
+        basis=citation
+  sentences=1  citation_verified=1  direct_quote=0  summary=0  drift=0  unverified=0  drift_rate=0.0
 
 ------------------------------------------------------------------------------
 EVALUATION
@@ -59,16 +67,17 @@ whiteBoxRAG 是一套面向生产的 RAG 平台，所有组件都留在本地：
 
 名字就是承诺：不做黑盒。内置的 **RAG 调试台**会告诉你哪一句话依据的是哪个分块、某篇文档为什么没有被召回，让"检索/生成失败"可以被诊断，而不是靠猜。
 
-系统自带免构建的 Web 前端、58 个 REST 端点、场景化配置、带引用校验的句子级溯源、业务边界（OOD）检测、能从用户反馈中沉淀规则的规则引擎、可 A/B 对比的检索流水线，以及一套内置评估框架。
+系统自带免构建的 Web 前端、59 个 REST 端点、场景化配置、带引用校验的句子级溯源、业务边界（OOD）检测、能从用户反馈中沉淀规则的规则引擎、可 A/B 对比的检索流水线，以及一套内置评估框架。
 
 ## 核心亮点
 
 | | 你能得到什么 |
 |---|---|
-| **句子级溯源** | 回答被拆成句子逐句向量化并与检索到的分块对齐，标注为*有文档依据*、*摘要*、*低置信度*或*无依据推断*，同时审计大模型被强制输出的 `[doc_id]` 引用标记。 |
+| **句子级溯源** | 先核验引用：句子里的 `[doc_id]` 若能映射到本次送入 Prompt 的分块，就直接归属到该分块（*引用已核验*，属证据）。其余句子才走向量相似度：与检索分块做两种粒度的匹配，标注为*有文档依据*、*摘要*、*低置信度*或*无依据推断*，并在界面上明确说明这是相似度启发式、不是事实核验。溯源组件失败的句子标记为*未核验*，不会被当成幻觉。 |
 | **文档为什么没被召回** | 未召回诊断回答"文档明明存在，为什么没出现"：元数据过滤、得分低于阈值、检索模式不匹配、关键词缺失，四类根因。 |
+| **回答与原文是否一致** | 结构化矛盾检测把答案里的数值、金额、时长、日期与极性表述（支持/不支持、免费/收费、全额/部分）与真正送入 Prompt 的分块逐项比对，因此"原文写 0.4、模型写 0.6"会连同两个值一起报出来，而不是被子串匹配漏掉。 |
 | **反馈沉淀为规则** | 答错、漏召回、意图判别错误会进入规则引擎；当某个模式超过 `rule_engine.min_feedback_count` 后自动成为业务规则，其生效命中率可通过接口回查。 |
-| **调参靠证据，不靠感觉** | 场景化配置档、内置评估框架（召回率、忠实度、相关性、上下文利用率、幻觉率、拒答准确率）以及检索配置的 A/B 对比。 |
+| **调参靠证据，不靠感觉** | 场景化配置档、内置评估框架（检索质量、忠实度、语义一致性、引用覆盖率、相关性、幻觉率、拒答准确率），支持可配权重、标定后的达标线与 `rubric_version` 口径版本，以及检索配置的 A/B 对比。 |
 | **在数据所在的地方运行** | 8G 内存 / 4 核即可；不需要 Redis、MySQL 或消息队列。向量、文档、溯源、任务状态都是本地文件；推理走本地 Ollama，OpenAI 为可选项。 |
 | **默认不外传任何数据** | 解析、向量化、检索、生成全部在本机；敏感配置来自 `.env`，不落库、不进 YAML。 |
 
@@ -113,13 +122,15 @@ whiteBoxRAG 是一套面向生产的 RAG 平台，所有组件都留在本地：
 
 **回答质量与安全**
 - 强制引用格式：大模型必须用 `[doc_id]` 标注事实，随后统一校验
-- 句子级溯源：区分直接引用、摘要、低置信度与无依据漂移
+- 句子级溯源：先做引用核验（`[文档N]` → 命中本次检索到的分块，属证据），无可用引用时再用向量相似度启发式判定；相似度结论明确标注为启发式，而非事实核验
+- 溯源组件不可用（如 Embedding 失败）时该句标记为「未核验」，不计入漂移/幻觉率，避免把工具故障当成模型幻觉
+- 矛盾检测：把答案中的数值/金额/时长/日期按单位归一后与原文逐项比对（7 天 == 168 小时、1 万元 == 10000 元），并识别"支持/不支持""全额/部分""免费/收费"等极性冲突；只有无法被原文任何一条同主题声明解释时才判定为矛盾
 - 业务边界（OOD）检测：关键词白/黑名单 + 大模型语义判定
 - 熔断器：错误率或时延异常时打开，保护模型后端
 
 **可观测与调优**
 - 未召回诊断：解释某篇文档为何被漏掉（元数据过滤、得分阈值、模式不匹配、关键词缺失）
-- 评估框架：召回率、忠实度、相关性、上下文利用率、幻觉率、拒答准确率
+- 评估框架（rubric v2）：十个指标分三层 —— 检索质量（平均融合分、分数标准差）、有据性（忠实度、语义一致性、引用覆盖率）、相关性、安全（幻觉率、拒答准确率、空响应、长度）；每个指标按达标线归一化（`value == target` 恰好得 `pass_score`=0.7），综合分是加权平均，`is_passing` 是同一个分数 + 显式硬门槛（非空响应、幻觉率不超限、可评估权重足够），分数与判定不会再互相矛盾；权重与达标线见 `config/settings.yaml` 的 `evaluation:` 段，可被场景覆盖；分数带 `rubric_version`，跨版本/跨场景不可比；标定工具 `scripts/evaluator_recalc.py`，回归测试 `tests/test_evaluator.py`
 - 规则引擎：把用户反馈聚合为业务规则，并回报其实际生效情况
 - A/B 测试：并排比较不同检索配置
 - 性能监控、结构化日志与对话历史分析
@@ -153,9 +164,9 @@ whiteBoxRAG/
 ├── api/                    # FastAPI 应用与路由（knowledge / chat / monitor / scenario / evaluation / document_optimizer）
 ├── core/                   # RAG 核心：解析、向量库、混合检索、问答流水线、边界检测、熔断、
 │                           #          查询改写、规则引擎、评估、未召回诊断、句子级溯源、意图分类
-├── service/                # 日志、异步任务、监控、限流、定时任务、i18n、响应编码
+├── service/                # 日志、异步任务、监控、限流、定时任务、i18n、响应编码、统一分句器（text_split）
 ├── config/                 # settings.yaml、同义词/错别字词典、scenarios/ 场景配置
-├── static/                 # 前端（index.html / admin.html / ab_test.html / i18n.js，免构建）
+├── static/                 # 前端（index.html、js/、css/、admin.html、ab_test.html、i18n.js，免构建）
 ├── storage/                # 运行时数据（vectordb、documents、traces、tasks、monitor、logs）
 ├── deploy/                 # Dockerfile、gunicorn.conf.py、start.sh、DEPLOY.md
 ├── scripts/seed_demo.py    # 一键演示：建库 → 入库 → 提问 → 打印逐句溯源
@@ -165,8 +176,9 @@ whiteBoxRAG/
 ├── tools/                  # 日志分析、i18n 一致性检查
 ├── docker-compose.yml      # Ollama + 模型拉取 + 应用，一条命令
 ├── main.py                 # 一键启动脚本
-├── requirements.txt        # 运行依赖
-└── requirements-dev.txt    # 测试 / 静态检查依赖
+├── pyproject.toml          # 项目元数据 + 依赖（运行依赖 + dev 依赖组）
+├── uv.lock                 # 锁定的依赖版本（需要提交）
+└── .python-version         # uv 的解释器版本（3.12）
 ```
 
 各模块的详细说明（LLM 流水线、混合检索、边界检测、熔断、评估、规则引擎、前端页面等）见
@@ -178,7 +190,8 @@ whiteBoxRAG/
 
 | 要求 | 说明 |
 |------|------|
-| Python 3.12+ | `python main.py --install` 会自动创建虚拟环境并安装运行依赖 |
+| Python 3.12+ | 由 `.python-version` 固定，uv 自行安装并管理解释器 |
+| [uv](https://docs.astral.sh/uv/) 0.10+ | 创建 `.venv` 并安装 `uv.lock` 锁定的依赖（`uv sync`） |
 | Ollama 0.1.25+ | 监听 `:11434`，且已拉取所需模型 |
 | 资源 | 最低 8G 内存 / 4 核 CPU / 20GB 可用磁盘 |
 
@@ -193,27 +206,44 @@ ollama pull qwen2.5:7b && ollama pull nomic-embed-text:latest  # 两个模型约
 ### 一键启动（推荐）
 
 ```bash
-# 首次运行：检测环境、安装依赖、启动服务
-python main.py --install
+# 首次运行：先复制运行环境配置文件（缺少 .env 时服务会拒绝启动），
+# 再由 uv sync 创建 .venv 并安装锁定依赖，随后启动服务
+cp .env.example .env
+uv run python main.py --install
 
-# 开发模式（代码变更自动重载）
-python main.py --install --dev
+# 开发模式（代码变更自动重载；--install --dev 会一并安装 pytest / flake8）
+uv run python main.py --install --dev
 
-# 生产模式（跳过环境检查）
-python main.py --no-check
+# 生产模式（跳过环境检查，不安装依赖）
+uv run python main.py --no-check
 
 # 指定监听地址与端口
-python main.py --host 0.0.0.0 --port 8080
+uv run python main.py --host 0.0.0.0 --port 8080
 ```
+
+`python main.py --install` 同样可用：它会代为执行 `uv sync`，然后在 `.venv` 中重启自身。
+只需要运行依赖时用 `uv sync --no-dev`。
 
 ### 手动部署
 
 ```bash
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn api.api:app --host 0.0.0.0 --port 8080
+uv sync                                  # 创建 .venv，安装 uv.lock 中的运行依赖与 dev 依赖
+uv run python -m uvicorn api.api:app --host 0.0.0.0 --port 8080
 ```
+
+| 命令 | 作用 |
+|------|------|
+| `uv sync` | 按锁文件创建/更新 `.venv`（含 `dev` 依赖组） |
+| `uv sync --no-dev` | 只装运行依赖（生产镜像用的就是它） |
+| `uv sync --locked` | 不允许改动 `uv.lock`，CI 与 Docker 使用 |
+| `uv run <cmd>` | 在 `.venv` 中执行命令（必要时先自动同步） |
+| `uv lock` | 修改 `pyproject.toml` 后重新解析锁文件 |
+
+也可以先激活环境再直接用 `python`：Windows 用 `.venv\Scripts\activate`，Linux/macOS 用
+`source .venv/bin/activate`。
+
+若 PyPI 访问慢或被限制，只为该条命令指定镜像源即可（uv 不读取 `.env` 文件，需在 shell / CI /
+Dockerfile 中设置环境变量）：`UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple uv sync`。
 
 ### 容器部署
 
@@ -287,10 +317,16 @@ OPENAI_API_KEY=sk-...
 | `llm.provider` | 模型提供者：`ollama` / `openai` | `ollama` |
 | `ollama.llm_model` | 大模型名称 | `qwen2.5:7b` |
 | `ollama.embedding_model` | 向量模型名称 | `nomic-embed-text:latest` |
-| `vector_store.top_k` | 向量召回数量 | `5` |
-| `vector_store.similarity_threshold` | 相似度阈值 | `0.1` |
+| `vector_store.top_k` | 向量召回数量（组件级；混合检索使用 `retriever.top_k`） | `5` |
+| `vector_store.similarity_threshold` | 相似度阈值（组件级；混合检索使用 `retriever.similarity_threshold`） | `0.1` |
 | `retriever.mode` | 检索模式：`vector` / `bm25` / `hybrid` | `hybrid` |
-| `retriever.bm25_weight` | 混合检索中 BM25 权重（向量权重 = 1 − 该值） | `0.4` |
+| `retriever.bm25_weight` | 混合检索中 BM25 权重（向量权重 = 1 − 该值） | `0.6` |
+| `retriever.top_k` | 送入 Prompt 的片段数量 | `5` |
+| `retriever.similarity_threshold` | 片段进入 Prompt 的最低相似度 | `0.5` |
+| `retriever.reroute_on_empty_route` | 某一路无结果时，该路权重在该次查询中让给另一路（`debug_info.route_degraded` 记录）；关闭可对比原始配置 | `true` |
+| `bm25.build_wait_ms` | 检索等待进行中 BM25 索引构建的上限（毫秒），超时才降级到剩余检索路 | `500` |
+| `retriever.query_rewrite_enabled` | 是否执行查询改写阶段 | `true` |
+| `retriever.rerank_enabled` | 是否执行重排阶段（关闭时 `rerank_top_k` 退化为 `top_k`） | `true` |
 | `retriever.compression.enabled` | 调用大模型前压缩上下文 | `true` |
 | `document_parser.chunk_size` | 分块大小（字符） | `512` |
 | `document_parser.max_file_size` | 单文件上传上限（MB） | `50` |
@@ -299,6 +335,8 @@ OPENAI_API_KEY=sk-...
 | `api.rate_limit` | 每 IP 每分钟请求数 | `60` |
 | `trace.enabled` | 问答溯源记录 | `true` |
 | `recall_diagnostic.enabled` | 未召回根因分析 | `true` |
+| `contradiction.enabled` | 结构与原文矛盾检测（数值/金额/日期/极性） | `true` |
+| `contradiction.relative_tolerance` | 相对偏差超过该比例才报出数值不一致 | `0.2` |
 
 ### 环境变量
 
@@ -330,7 +368,7 @@ cp .env.example .env
 
 ## API 概览
 
-系统共提供 **58 个 REST 端点**，分为六个模块：知识库管理、对话问答、场景管理、质量评估、文档优化、系统监控。
+系统共提供 **59 个 REST 端点**，分为六个模块：知识库管理、对话问答、场景管理、质量评估、文档优化、系统监控。
 交互式文档位于 `http://localhost:8080/docs`（Swagger UI）与 `/redoc`。
 
 完整的端点清单（方法、功能说明与请求示例）见 [`docs/ARCHITECTURE_ZH.md`](docs/ARCHITECTURE_ZH.md)；
@@ -339,32 +377,37 @@ cp .env.example .env
 ## 测试
 
 ```bash
-pip install -r requirements-dev.txt          # 安装 pytest、pytest-asyncio、flake8
+uv sync                                      # 运行依赖 + dev 依赖（pytest、pytest-asyncio、flake8）
 
 # 离线用例（与 CI 完全一致，不需要运行中的服务或 Ollama）
-pytest -q \
+uv run pytest -q \
   tests/test_boundary_detector.py tests/test_query_rewrite.py tests/test_retriever.py \
   tests/test_regression.py tests/test_llm_citations.py tests/test_doc_analyzer.py \
   tests/test_abtest_integration.py tests/test_async_tasks_kb.py \
   tests/test_i18n_consistency.py tests/test_http_encoding.py \
-  tests/test_parser.py tests/test_path_safety.py tests/test_abtest_rules.py
+  tests/test_parser.py tests/test_path_safety.py \
+  tests/test_retrieval_funnel.py tests/test_chat_debug_endpoints.py \
+  tests/test_retrieval_defaults.py tests/test_abtest_rules.py \
+  tests/test_text_split.py tests/test_sentence_tracing.py \
+  tests/test_streaming_trace_offsets.py tests/test_contradiction.py
+  tests/test_retrieval_degradation.py tests/test_hybrid_disclaimer_dedupe.py
 
 # 全部用例（test_api / test_bm25_simple / test_hybrid_search_demo 需要服务或 Ollama）
-pytest tests/ -q
+uv run pytest tests/ -q
 
-python tools/check_i18n.py                   # 中英文案 key 与占位符一致性检查
+uv run python tools/check_i18n.py            # 中英文案一致性：后端与前端词典的 key / 占位符对齐，英文词典不含汉字
 ```
 
-每个测试文件都可以直接当脚本运行，例如 `python tests/test_parser.py`；逐文件覆盖范围见
+每个测试文件都可以直接当脚本运行，例如 `uv run python tests/test_parser.py`；逐文件覆盖范围见
 [`docs/ARCHITECTURE_ZH.md`](docs/ARCHITECTURE_ZH.md) 第 10 节。CI 配置见 `.github/workflows/ci.yml`。
 
 ## 生产部署
 
 ```bash
-gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 api.api:app
+uv run gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 api.api:app
 
 # 或使用自带配置文件
-gunicorn -c deploy/gunicorn.conf.py api.api:app
+uv run gunicorn -c deploy/gunicorn.conf.py api.api:app
 ```
 
 推荐单 worker：向量库与 BM25 索引保存在进程内存中，多 worker 会复制这份状态。

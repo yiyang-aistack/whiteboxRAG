@@ -453,7 +453,7 @@ class LogAnalyzer:
     <div class="container">
         <div class="header">
             <h1>📊 whiteBoxRAG Log Analysis Report</h1>
-            <p>生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p>Generated Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         </div>
         
         <div class="cards">

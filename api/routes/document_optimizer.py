@@ -2,7 +2,6 @@
 Document optimization API routes
 Provides document analysis and optimization features
 """
-import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -18,12 +17,12 @@ from service.path_safety import safe_join, sanitize_filename
 
 logger = get_logger('api.document_optimizer')
 
-router = APIRouter(prefix="/api/document", tags=["文档优化"])
+router = APIRouter(prefix="/api/document", tags=["document_optimizer"])
 
 
 class AnalyzeRequest(BaseModel):
     """Document analysis request"""
-    kb_id: Optional[str] = Field(None, description="知识库ID（可选）")
+    kb_id: Optional[str] = Field(None, description="Knowledge base ID (optional)")
 
 
 class AnalyzeResponse(BaseModel):
@@ -38,8 +37,8 @@ class AnalyzeResponse(BaseModel):
 
 class OptimizeRequest(BaseModel):
     """Document optimization request"""
-    kb_id: Optional[str] = Field(None, description="知识库ID（可选）")
-    output_dir: Optional[str] = Field(None, description="输出目录（可选）")
+    kb_id: Optional[str] = Field(None, description="Knowledge base ID (optional)")
+    output_dir: Optional[str] = Field(None, description="Output directory (optional)")
 
 
 class OptimizeResponse(BaseModel):
@@ -49,7 +48,7 @@ class OptimizeResponse(BaseModel):
     documents: List[Dict]
 
 
-@router.post("/analyze", response_model=AnalyzeResponse, summary="分析文档")
+@router.post("/analyze", response_model=AnalyzeResponse, summary="Analyze document quality")
 async def analyze_documents(request: AnalyzeRequest, req: Request):
     """Analyze document quality of a specified knowledge base"""
     lang = get_lang_from_request(req)
@@ -71,7 +70,7 @@ async def analyze_documents(request: AnalyzeRequest, req: Request):
             'top_keywords': dict(analyzer.query_keywords.most_common(10))
         }
 
-        logger.info(f"文档分析完成: 覆盖度分析{len(analyzer.coverage_analysis)}条, 问题{len(document_issues)}个")
+        logger.info(f"Document analysis completed: Coverage analysis {len(analyzer.coverage_analysis)} records, Issues {len(document_issues)} issues")
 
         return {
             'success': True,
@@ -81,14 +80,14 @@ async def analyze_documents(request: AnalyzeRequest, req: Request):
         }
 
     except Exception as e:
-        logger.error(f"文档分析失败: {e}", exc_info=True)
+        logger.error(f"Document analysis failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('docopt.analyze_failed', lang) + ': ' + str(e)
         )
 
 
-@router.post("/optimize", response_model=OptimizeResponse, summary="优化文档")
+@router.post("/optimize", response_model=OptimizeResponse, summary="Optimize documents")
 async def optimize_documents(request: OptimizeRequest, req: Request):
     """Optimize documents of a specified knowledge base"""
     lang = get_lang_from_request(req)
@@ -98,22 +97,29 @@ async def optimize_documents(request: OptimizeRequest, req: Request):
         analyzer.load_source_documents()
         analyzer.load_conversation_logs()
         
-        output_dir = request.output_dir or analyzer.output_dir
-        analyzer.generate_optimized_document(output_dir=output_dir)
+        # output_dir is client supplied: confine it to a single sub-directory of the configured
+        # output root so a request cannot create or write files anywhere on the host.
+        output_root = Path(config.get('document_analyzer.output_dir', './storage/optimized_docs'))
+        if request.output_dir:
+            output_dir = str(safe_join(output_root, request.output_dir))
+        else:
+            output_dir = analyzer.output_dir
+
+        # Report the names that were actually written: the suffixes are fixed in
+        # docAnalyze.generate_optimized_document and are not localized.
+        written = analyzer.generate_optimized_document(output_dir=output_dir)
 
         result_docs = []
         for doc in analyzer.source_docs:
-            name_without_ext = os.path.splitext(doc['file_name'])[0]
-            ext = os.path.splitext(doc['file_name'])[1]
-            
+            produced = written.get(doc['file_name'], {})
             result_docs.append({
                 'file_name': doc['file_name'],
                 'original_char_count': doc['char_count'],
-                'suggestion_file': f"{name_without_ext}{_('docopt.suggestion_suffix', lang)}{ext}",
-                'optimized_file': f"{name_without_ext}{_('docopt.optimized_suffix', lang)}{ext}"
+                'suggestion_file': produced.get('suggestion_file', ''),
+                'optimized_file': produced.get('optimized_file', '')
             })
 
-        logger.info(f"文档优化完成: 优化了{len(result_docs)}个文档")
+        logger.info(f"Document optimization completed: Optimized {len(result_docs)} documents")
 
         return {
             'success': True,
@@ -122,14 +128,14 @@ async def optimize_documents(request: OptimizeRequest, req: Request):
         }
 
     except Exception as e:
-        logger.error(f"文档优化失败: {e}", exc_info=True)
+        logger.error(f"Document optimization failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('docopt.optimize_failed', lang) + ': ' + str(e)
         )
 
 
-@router.get("/issues", summary="获取文档问题列表")
+@router.get("/issues", summary="Get document issues list")
 async def get_document_issues(req: Request, kb_id: Optional[str] = None):
     """Get document issues list of a specified knowledge base"""
     lang = get_lang_from_request(req)
@@ -145,14 +151,14 @@ async def get_document_issues(req: Request, kb_id: Optional[str] = None):
         }
 
     except Exception as e:
-        logger.error(f"获取文档问题失败: {e}", exc_info=True)
+        logger.error(f"Get document issues failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('docopt.issues_failed', lang) + ': ' + str(e)
         )
 
 
-@router.get("/coverage", summary="获取文档覆盖度")
+@router.get("/coverage", summary="Get document coverage analysis")
 async def get_document_coverage(req: Request, kb_id: Optional[str] = None):
     """Get document coverage analysis of a specified knowledge base"""
     lang = get_lang_from_request(req)
@@ -168,14 +174,14 @@ async def get_document_coverage(req: Request, kb_id: Optional[str] = None):
         }
 
     except Exception as e:
-        logger.error(f"获取文档覆盖度失败: {e}", exc_info=True)
+        logger.error(f"Get document coverage failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('docopt.coverage_failed', lang) + ': ' + str(e)
         )
 
 
-@router.get("/download/optimized", summary="下载优化后文档")
+@router.get("/download/optimized", summary="Download optimized document")
 async def download_optimized_document(req: Request, file_name: str):
     """Download the optimized document"""
     lang = get_lang_from_request(req)
@@ -183,7 +189,7 @@ async def download_optimized_document(req: Request, file_name: str):
         output_dir = Path(config.get('document_analyzer.output_dir', './storage/optimized_docs'))
         # file_name arrives from the query string. A legitimate caller never sends a path
         # separator, and without this guard the endpoint could read any file the process can
-        # access (e.g. ?file_name=../../../requirements.txt).
+        # access (e.g. ?file_name=../../../pyproject.toml).
         if not file_name or sanitize_filename(file_name) != file_name.strip():
             logger.warning(f"Rejected unsafe download path: {file_name!r}")
             raise HTTPException(
@@ -214,14 +220,14 @@ async def download_optimized_document(req: Request, file_name: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"下载文档失败: {e}", exc_info=True)
+        logger.error(f"Download optimized document failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('docopt.download_failed', lang) + ': ' + str(e)
         )
 
 
-@router.post("/full-analysis", summary="执行完整分析")
+@router.post("/full-analysis", summary="Run full document analysis and optimization workflow")
 async def run_full_analysis(req: Request, kb_id: Optional[str] = None):
     """Run the complete document analysis and optimization workflow"""
     lang = get_lang_from_request(req)
@@ -237,7 +243,7 @@ async def run_full_analysis(req: Request, kb_id: Optional[str] = None):
         }
 
     except Exception as e:
-        logger.error(f"完整分析失败: {e}", exc_info=True)
+        logger.error(f"Run full document analysis failed failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('docopt.full_analysis_failed', lang) + ': ' + str(e)

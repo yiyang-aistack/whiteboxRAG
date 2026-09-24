@@ -17,12 +17,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import yaml
 
-# Try loading .env file from project root (optional dependency, silently skip if not installed)
+# Try loading .env file from project root. The .env file (copied from .env.example)
+# is the sole source of truth for LLM provider configuration. If it is missing we
+# print a friendly hint once — downstream checks will catch any misconfiguration.
 try:
     from dotenv import load_dotenv
     _env_path = Path(__file__).parent.parent / '.env'
     if _env_path.exists():
         load_dotenv(_env_path)
+    else:
+        # .env missing — warn once. This is non-fatal because the user may have set
+        # these variables in the shell directly (CI, Docker, etc.).
+        import sys
+        print(
+            "[config] .env not found — copy .env.example to .env and fill in LLM_PROVIDER",
+            file=sys.stderr
+        )
 except ImportError:
     pass
 
@@ -36,6 +46,12 @@ except ImportError:
 _ENV_OVERRIDES: Dict[str, tuple] = {
     # LLM provider selection
     'LLM_PROVIDER':           ('llm', 'provider'),
+    # Embedding provider selection (independent from LLM provider)
+    # Options: 'ollama' | 'openai' | 'local'
+    'EMBEDDING_PROVIDER':           ('embedding', 'provider'),
+    # Local embedding model (HuggingFace format): path or model name
+    'LOCAL_EMBEDDING_MODEL_PATH':   ('embedding', 'local_model_path'),
+    'LOCAL_EMBEDDING_DIM':          ('embedding', 'local_dim', int),
     # Ollama (local)
     'OLLAMA_BASE_URL':        ('ollama', 'llm_base_url'),
     'OLLAMA_LLM_MODEL':       ('ollama', 'llm_model'),
@@ -53,6 +69,12 @@ _ENV_OVERRIDES: Dict[str, tuple] = {
     # Application security
     'API_KEY':                ('api', 'api_key'),
     'API_RATE_LIMIT':         ('api', 'rate_limit', int),
+    # Application server bind address and port (deployment-level config)
+    'HOST':                   ('system', 'host'),
+    'PORT':                   ('system', 'port', int),
+    'AUTHOR':                 ('system', 'author'),
+    # Backend-side default language for logs and exception messages (zh-CN | en-US)
+    'DEFAULT_LANG':           ('system', 'default_lang'),
 }
 
 
@@ -160,45 +182,79 @@ class ConfigManager:
     def get_llm_model(self, purpose: str = None) -> str:
         """Resolve the LLM model name based on the configured provider.
 
+        Values come exclusively from .env (which sets env vars that are injected
+        into the central config dict in _apply_env_overrides). There is no hardcoded
+        fallback because the correct model name depends entirely on what the user
+        has actually pulled / subscribed to.
+
         Args:
             purpose: Optional purpose key (e.g. 'intent'). When set, checks
-                     for a purpose-specific Ollama model (ollama.<purpose>_model)
-                     before falling back to the default LLM model.
+                     for a purpose-specific Ollama model before falling back
+                     to the default LLM model.
 
         Returns:
-            The resolved model name string.
+            The resolved model name string, or an empty string if not configured.
         """
-        provider = self.get('llm.provider', 'ollama')
+        provider = self.get('llm.provider', '')
         if provider == 'openai':
-            return self.get('openai.llm_model', 'gpt-4o')
-        # For Ollama, allow purpose-specific model override
+            return self.get('openai.llm_model', '')
+        # Default / Ollama path
         if purpose:
-            purpose_model = self.get(f'ollama.{purpose}_model')
+            purpose_model = self.get(f'ollama.{purpose}_model', '')
             if purpose_model:
                 return purpose_model
-        return self.get('ollama.llm_model', 'qwen2.5:7b')
+        return self.get('ollama.llm_model', '')
+
+    def get_embedding_provider(self) -> str:
+        """Resolve the active embedding provider.
+
+        Reads embedding.provider first; falls back to llm.provider when the
+        former is blank. This keeps the classic "LLM=embedding" behavior
+        working while supporting independent embedding backends.
+
+        Returns:
+            One of 'ollama' | 'openai' | 'local', or '' when nothing is set.
+        """
+        provider = str(self.get('embedding.provider', '')).strip().lower()
+        if not provider:
+            provider = str(self.get('llm.provider', '')).strip().lower()
+        return provider
 
     def get_embedding_model(self) -> str:
-        """Resolve the embedding model name based on the configured provider.
+        """Resolve the embedding model name based on the configured EMBEDDING provider.
+
+        When EMBEDDING_PROVIDER=local, returns the local model path (not a model
+        name string). Callers that need to know whether the backend is local should
+        use get_embedding_provider() instead.
 
         Returns:
-            The resolved embedding model name string.
+            The resolved embedding model name/path, or an empty string if not configured.
         """
-        provider = self.get('llm.provider', 'ollama')
+        provider = self.get_embedding_provider()
+        if provider == 'local':
+            return self.get('embedding.local_model_path', '')
         if provider == 'openai':
-            return self.get('openai.embedding_model', 'text-embedding-3-small')
-        return self.get('ollama.embedding_model', 'nomic-embed-text:latest')
+            return self.get('openai.embedding_model', '')
+        if provider == 'ollama':
+            return self.get('ollama.embedding_model', '')
+        return ''
 
-    def get_llm_base_url(self) -> str:
-        """Resolve the LLM service base URL based on the configured provider.
+    def get_llm_base_url(self, provider: Optional[str] = None) -> str:
+        """Resolve the service base URL for a provider.
+
+        Args:
+            provider: 'ollama' | 'openai'. Defaults to the configured LLM provider.
+                Pass one explicitly when the caller needs the URL of a different backend —
+                the embedding provider can be set independently of the LLM provider, and
+                pairing one provider's URL with another's model name never works.
 
         Returns:
-            The resolved base URL string.
+            The resolved base URL string, or an empty string if not configured.
         """
-        provider = self.get('llm.provider', 'ollama')
+        provider = (provider or self.get('llm.provider', '')).strip().lower()
         if provider == 'openai':
-            return self.get('openai.base_url', 'https://api.openai.com/v1')
-        return self.get('ollama.llm_base_url', 'http://localhost:11434')
+            return self.get('openai.base_url', '')
+        return self.get('ollama.llm_base_url', '')
 
     def get_all(self) -> Dict[str, Any]:
         """Get all config"""

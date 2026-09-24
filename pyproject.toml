@@ -1,0 +1,148 @@
+# whiteBoxRAG — project metadata and the single source of truth for dependencies.
+#
+# Everything is managed with uv (https://docs.astral.sh/uv/):
+#
+#   uv sync                 # create .venv and install runtime + dev dependencies from uv.lock
+#   uv sync --no-dev        # runtime dependencies only
+#   uv run python main.py    # run anything inside the project environment
+#
+# The lockfile (uv.lock) is committed on purpose: `uv sync --locked` reproduces the exact
+# dependency set on every machine and in CI/Docker.
+#
+# The project is deliberately *not* a distributable package — the service runs straight from
+# the source tree (`uvicorn api.api:app`, see main.py / deploy/), which is what
+# `[tool.uv] package = false` below encodes: `uv sync` installs the dependencies only and never
+# builds or installs whiteBoxRAG itself.
+
+[project]
+name = "whiteboxrag"
+version = "1.0.0"
+description = "White-box private RAG system with a built-in RAG debugger — sentence-level citation tracing, recall root-cause diagnosis, evaluation metrics and A/B-tested hybrid retrieval."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "whiteBoxRAG contributors" }]
+keywords = [
+    "rag",
+    "rag-debugger",
+    "rag-observability",
+    "rag-evaluation",
+    "llmops",
+    "hybrid-search",
+    "ollama",
+    "chromadb",
+    "llamaindex",
+    "fastapi",
+    "local-first",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Natural Language :: Chinese (Simplified)",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Core Framework
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "gunicorn>=21.2.0",
+    # RAG Core
+    "llama-index>=0.10.68",
+    "llama-index-core>=0.10.68",
+    "llama-index-embeddings-ollama>=0.1.2",
+    "llama-index-llms-ollama>=0.1.5",
+    "llama-index-vector-stores-chroma>=0.1.10",
+    # Vector Store
+    "chromadb>=0.4.24",
+    # Document Parsing
+    "pypdf>=4.0.1",
+    # pdfplumber is the preferred PDF extractor (better CJK layout handling);
+    # core/document_parser.py falls back to pypdf when it is unavailable.
+    "pdfplumber>=0.10.3",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.2",
+    "python-pptx>=0.6.23",
+    "beautifulsoup4>=4.12.3",
+    "lxml>=5.1.0",
+    # Retrieval Enhancement
+    "rank-bm25>=0.2.2",
+    # Imported directly by core/evaluator.py, core/sentence_tracing.py and core/recall_diagnostic.py
+    "numpy>=1.26.0",
+    # LLM / HTTP clients (imported directly by application code, not only transitively)
+    #   requests -> core/llm_adapter.py
+    #   ollama   -> core/llm_adapter.py, core/recall_diagnostic.py, docAnalyze.py
+    #   httpx    -> scripts/seed_demo.py
+    "requests>=2.31.0",
+    "ollama>=0.1.7",
+    "httpx>=0.26.0",
+    # Monitoring, scheduling and document analysis
+    #   psutil       -> service/monitor.py (CPU / memory snapshots)
+    #   APScheduler  -> service/scheduler.py (cron tasks, disabled by default)
+    #   scikit-learn -> docAnalyze.py (TF-IDF document relation analysis)
+    "psutil>=5.9.8",
+    "apscheduler>=3.10.4",
+    "scikit-learn>=1.3.2",
+    # Configuration and Tools
+    "pyyaml>=6.0.1",
+    "python-multipart>=0.0.6",
+    "aiofiles>=23.2.1",
+    "jieba>=0.42.1",
+    "python-dotenv>=1.0.0",
+    # chardet is used by api/routes/knowledge.py to detect the encoding of uploaded text files
+    "chardet>=5.2.0",
+    # Both distributions ship a `magic` package, so they must never be installed together:
+    # python-magic-bin contains the module *and* the bundled libmagic DLL for Windows, while the
+    # plain python-magic wheel expects a system libmagic. Installing both makes them overwrite
+    # each other's magic/__init__.py (whichever is installed last wins), which silently disables
+    # MIME validation on Windows.
+    #   non-Windows -> python-magic (+ system libmagic)
+    #   Windows     -> python-magic-bin (bundled libmagic, version 1.0.x)
+    "python-magic>=0.4.27; sys_platform != 'win32'",
+    "python-magic-bin>=0.4.14; sys_platform == 'win32'",
+    "slowapi>=0.1.9",
+    # Type Hints
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "sentence-transformers>=6.1.0",
+]
+
+# Optional extras. Not installed by a plain `uv sync` because they pull in large wheels
+# (sentence-transformers brings torch, ~2 GB) that the default Ollama/OpenAI setups never need.
+[project.optional-dependencies]
+# EMBEDDING_PROVIDER=local — run a HuggingFace embedding model in-process.
+local-embedding = ["sentence-transformers>=2.2.0"]
+
+[project.urls]
+Homepage = "https://github.com/yiyang-aistack/whiteboxRAG"
+Repository = "https://github.com/yiyang-aistack/whiteboxRAG"
+Issues = "https://github.com/yiyang-aistack/whiteboxRAG/issues"
+Changelog = "https://github.com/yiyang-aistack/whiteboxRAG/blob/main/CHANGELOG.md"
+
+# Development / CI dependencies (PEP 735). `uv sync` installs this group by default,
+# `uv sync --no-dev` skips it, and `uv sync --only-dev` installs nothing but these.
+#
+# Every file under tests/ is also runnable as a plain script
+# (uv run python tests/test_parser.py), so pytest is convenient but not mandatory.
+[dependency-groups]
+dev = [
+    # Testing
+    "pytest==8.0.0",
+    # 0.23.4 (the version this project used to pin) declares `pytest<8`, which is unsatisfiable
+    # together with `pytest==8.0.0`; 0.23.5 relaxed the cap to `pytest<9`.
+    "pytest-asyncio==0.23.8",
+    # Linting
+    "flake8>=7.0.0",
+]
+
+[tool.uv]
+# Not a package: never build/install the project itself, only its dependencies.
+package = false
+# The committed uv.lock is `version = 1, revision = 3`, written by uv 0.10.x. An older uv would
+# refuse it with a confusing error, so fail early with an actionable message instead.
+required-version = ">=0.10"

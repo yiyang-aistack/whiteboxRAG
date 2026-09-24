@@ -8,6 +8,10 @@ Features:
 2. Analyze structural issues and information gaps in source documents
 3. Optimize document structure based on user question patterns
 4. Generate cleaned document versions to improve retrieval hit rate and answer accuracy
+
+TODO:
+1. integrate with LLM wiki to setup multi layers of document analysis
+
 """
 
 import json
@@ -38,8 +42,8 @@ class DocumentAnalyzer:
         self.max_doc_length = self.config.get('max_doc_length', 5000)
         self.min_chinese_ratio = self.config.get('min_chinese_ratio', 50)
         self.use_llm_for_qa = self.config.get('use_llm_for_qa', False)
-        self.llm_base_url = config.get('ollama.llm_base_url', 'http://localhost:11434')
-        self.llm_model = config.get('ollama.llm_model', 'qwen2.5:7b')
+        self.llm_base_url = config.get('ollama.llm_base_url', '')
+        self.llm_model = config.get('ollama.llm_model', '')
         
         self.source_docs = []
         self.user_queries = []
@@ -125,38 +129,42 @@ class DocumentAnalyzer:
         self.logger.info(f"Intent distribution: {dict(self.intent_patterns)}")
 
     def _extract_keywords(self, text: str) -> List[str]:
-        """Extract keywords"""
+        """Extract keywords (bilingual: Chinese via jieba + English via sklearn stop words)"""
         import jieba
         words = jieba.lcut(text)
         """Stop word list
-        Stop words that are common in Chinese and should be filtered out when extracting keywords.
-        It is customized based on the actual conversation logs.
+        Chinese stop words + English stop words (from sklearn.feature_extraction.text).
+        sklearn is already a project dependency (used in analyze_document_relations).
+        Customized based on actual conversation logs.
         """
-        stop_words = {'的', '了', '是', '我', '你', '他', '她', '它', '这', '那',
-                      '在', '有', '不', '没', '要', '去', '来', '上', '下', '给',
-                      '和', '与', '及', '对', '对于', '关于', '因为', '所以', '但是',
-                      '如果', '什么', '怎么', '如何', '为什么', '哪里', '谁', '哪个',
-                      '多少', '请', '帮', '一下', '一下', '可以', '会', '就', '都',
-                      '也', '很', '到', '说', '想', '做', '看', '用', '过', '能',
-                      '让', '把', '被', '从', '向', '以', '为', '之', '而', '则',
-                      '于', '所', '得', '地', '着', '呢', '吗', '吧', '啊', '呀',
-                      '呢', '哦', '嗯', '哈', '嗯', '个', '些', '点', '种', '类',
-                      '这', '那', '此', '其', '某', '各', '每', '任何', '所有',
-                      '一些', '许多', '少量', '全部', '整个', '部分', '另外', '其他',
-                      '还有', '以及', '等等', '例如', '比如', '包括', '通过',
-                      '根据', '按照', '基于', '结合', '利用', '采用', '使用',
-                      '可以', '应该', '必须', '需要', '可能', '会', '就', '将',
-                      '已', '已经', '正在', '将要', '曾', '曾经', '刚', '刚才',
-                      '现在', '目前', '当前', '最近', '以往', '过去', '将来',
-                      '以后', '之前', '之后', '然后', '最后', '首先', '其次',
-                      '接着', '终于', '突然', '忽然', '慢慢', '渐渐', '一直',
-                      '始终', '经常', '偶尔', '有时', '从不', '几乎', '大概',
-                      '差不多', '比较', '相当', '非常', '很', '太', '更', '最',
-                      '再', '又', '还', '也', '才', '就', '都', '只', '仅',
-                      '不', '没', '无', '非', '否', '别', '勿', '不要', '不能',
-                      '不会', '不必', '不用', '未', '尚未', '未然', '未曾'}
+        stop_words = {
+            # Chinese stop words
+            '的', '了', '是', '我', '你', '他', '她', '它', '这', '那',
+            '不会', '不必', '不用', '未', '尚未', '未然', '未曾',
+            # English stop words (lowercase, matched case-insensitively below)
+            'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
+            'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
+            'through', 'during', 'before', 'after', 'above', 'below', 'to',
+            'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under',
+            'again', 'further', 'once', 'is', 'are', 'was', 'were', 'be',
+            'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does',
+            'did', 'doing', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours',
+            'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves',
+            'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself',
+            'it', 'its', 'itself', 'they', 'them', 'their', 'theirs',
+            'themselves', 'what', 'which', 'who', 'whom', 'this', 'that',
+            'these', 'those', 'am', 'of', 'as', 'so', 'than', 'too', 'very',
+            'can', 'will', 'just', 'don', 'should', 'now', 'how', 'why',
+            'where', 'when', 'who', 'whom', 'whose'
+        }
 
-        keywords = [w for w in words if len(w) >= self.min_keyword_length and w not in stop_words]
+        # Case-insensitive matching for English tokens
+        keywords = [
+            w for w in words
+            if len(w) >= self.min_keyword_length
+            and w.lower() not in stop_words
+            and not re.fullmatch(r'[]+', w)   # also filter pure digits/punctuation
+        ]
         return keywords
 
     def analyze_document_coverage(self):
@@ -272,12 +280,19 @@ class DocumentAnalyzer:
 
         return issues
 
-    def generate_optimized_document(self, output_dir: str = None):
-        """Generate optimized document"""
+    def generate_optimized_document(self, output_dir: str = None) -> Dict[str, Dict[str, str]]:
+        """Generate optimized document
+
+        Returns:
+            Mapping of original file name -> {"suggestion_file", "optimized_file"} holding the
+            *actual* base names written to disk. Callers must report these instead of
+            reconstructing the names (the suffixes are not localized).
+        """
         output_dir = output_dir or self.output_dir
         self.logger.info(f"===  Generate optimized document ===")
 
         os.makedirs(output_dir, exist_ok=True)
+        written: Dict[str, Dict[str, str]] = {}
 
         for doc in self.source_docs:
             suggestion_content = self._generate_suggestion_document(doc['content'])
@@ -295,6 +310,11 @@ class DocumentAnalyzer:
             with open(opt_path, 'w', encoding='utf-8') as f:
                 f.write(opt_content)
 
+            written[file_name] = {
+                'suggestion_file': suggestion_path.name,
+                'optimized_file': opt_path.name,
+            }
+
             self.logger.info(f"  Suggestion document generated: {suggestion_path}")
             self.logger.info(f"  Optimized document generated: {opt_path}")
             self.logger.info(f"  Original character count: {doc['char_count']}")
@@ -302,6 +322,8 @@ class DocumentAnalyzer:
             self.logger.info(f"  Optimized character count: {len(opt_content)}")
 
             self._show_optimization_diff(doc['content'], opt_content)
+
+        return written
 
     def _optimize_document(self, content: str) -> str:
         """Optimize document content"""
@@ -592,7 +614,9 @@ class DocumentAnalyzer:
 
     def load_feedback_history(self):
         """Load user feedback history"""
-        feedback_file = Path('./storage/feedbacks.json')
+        # Read the same file the rule engine writes. Hardcoding the path here meant that
+        # pointing rule_engine.feedback_file somewhere else silently produced an empty history.
+        feedback_file = Path(config.get('rule_engine.feedback_file', './storage/feedbacks.json'))
         if feedback_file.exists():
             try:
                 with open(feedback_file, 'r', encoding='utf-8') as f:

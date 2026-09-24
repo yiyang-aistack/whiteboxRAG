@@ -7,6 +7,8 @@ import tempfile
 import os
 from pathlib import Path
 
+import pytest
+
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -14,6 +16,35 @@ from core.document_parser import DocumentParser, DocumentChunk
 from core.vector_store import VectorStoreManager
 from core.retriever import HybridRetriever
 from config import config
+
+# Throwaway knowledge base the fixtures below build and tear down.
+TEST_KB_ID = "test_kb_demo"
+
+
+@pytest.fixture(scope="module")
+def retriever():
+    """A retriever over a temporary knowledge base seeded with the demo chunks.
+
+    The fixtures here were missing entirely, so every test in this file errored during setup
+    with "fixture 'retriever' not found" and the file never ran. Note that embedding the demo
+    chunks needs a live embedding backend, which is why these tests stay out of the CI offline
+    subset (see .github/workflows/ci.yml).
+    """
+    vector_store = VectorStoreManager()
+    if vector_store.collection_exists(TEST_KB_ID):
+        vector_store.delete_collection(TEST_KB_ID)
+    assert vector_store.create_collection(TEST_KB_ID, "测试知识库"), "could not create the test knowledge base"
+    vector_store.add_documents(TEST_KB_ID, create_test_documents())
+
+    yield HybridRetriever(vector_store)
+
+    vector_store.delete_collection(TEST_KB_ID)
+
+
+@pytest.fixture(scope="module")
+def kb_id():
+    """ID of the knowledge base built by the `retriever` fixture."""
+    return TEST_KB_ID
 
 
 def create_test_documents():
@@ -127,7 +158,6 @@ def test_bm25_retrieval(retriever, kb_id):
             print(f"      分数: {doc['score']:.4f}")
             print(f"      内容: {doc['text'][:80]}...")
     
-    return retriever
 
 
 def test_vector_retrieval(retriever, kb_id):
@@ -174,7 +204,6 @@ def test_vector_retrieval(retriever, kb_id):
             print(f"      分数: {doc['score']:.4f}")
             print(f"      内容: {doc['text'][:80]}...")
     
-    return retriever
 
 
 def test_hybrid_retrieval(retriever, kb_id):
@@ -226,7 +255,6 @@ def test_hybrid_retrieval(retriever, kb_id):
             print(f"      类型: {doc['type']}")
             print(f"      内容: {doc['text'][:80]}...")
     
-    return retriever
 
 
 def test_empty_query(retriever, kb_id):
@@ -253,7 +281,6 @@ def test_empty_query(retriever, kb_id):
         print("\n降级回复:")
         print(f"  {result['empty_response']}")
     
-    return retriever
 
 
 def run_full_test():

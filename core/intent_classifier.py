@@ -23,13 +23,13 @@ class IntentClassifier:
 
         self._intent_templates = {
             'after_sales': ['return', 'refund', 'replace', 'repair', 'warranty', 'after_sales'],
-            'order': ['order', '下单', 'Purchase', 'Shop', 'Pay', '发货', '收货'],
-            'account': ['login', '注册', '账号', '密码', '账户', '会员'],
-            'product': ['product', '功能', '使用', '操作', '设置', '配置'],
-            'technical': ['技术', '开发', '接口', 'API', '部署', '安装'],
-            'financial': ['发票', '费用', '价格', '结算', '报销'],
-            '物流': ['物流', '快递', '配送', '运输', '签收'],
-            '咨询': ['咨询', '帮助', '问题', '了解', '查询'],
+            # 'order': ['order', '下单', 'Purchase', 'Shop', 'Pay', '发货', '收货'],
+            # 'account': ['login', '注册', '账号', '密码', '账户', '会员'],
+            # 'product': ['product', '功能', '使用', '操作', '设置', '配置'],
+            # 'technical': ['技术', '开发', '接口', 'API', '部署', '安装'],
+            # 'financial': ['发票', '费用', '价格', '结算', '报销'],
+            # '物流': ['物流', '快递', '配送', '运输', '签收'],
+            # '咨询': ['咨询', '帮助', '问题', '了解', '查询'],
         }
 
         self._time_patterns = [

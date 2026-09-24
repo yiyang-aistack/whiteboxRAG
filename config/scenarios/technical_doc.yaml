@@ -40,15 +40,23 @@ llm_pipeline:
 
 evaluation:
   enabled: true
+  # Metrics this scenario scores. `empty_response` and `hallucination_rate` are always
+  # evaluated as well (they gate the verdict), and `rejection_accuracy` only applies to
+  # questions the boundary detector flags as out of domain. Names must exist in
+  # core/evaluator.py -- unknown ones are logged and ignored (an earlier version of this
+  # file listed `answer_completeness` and `code_quality`, which never existed).
   metrics:
-    - "retrieval_recall"
+    - "retrieval_score_avg"
+    - "retrieval_score_std"
     - "answer_faithfulness"
+    - "semantic_consistency"
+    - "citation_coverage"
     - "answer_relevance"
-    - "answer_completeness"
-    - "code_quality"
+    - "response_length"
+  # Only the genuinely scenario-specific line is overridden here: technical answers may be
+  # long (code samples, step lists). The rest is inherited from
+  # `evaluation.target_values` in config/settings.yaml.
   target_values:
-    retrieval_recall: 0.75
-    answer_faithfulness: 0.9
-    answer_relevance: 0.85
-    answer_completeness: 0.85
-    code_quality: 0.8
+    response_length:
+      min: 50
+      max: 3000

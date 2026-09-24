@@ -20,30 +20,71 @@ class RecallDiagnostic:
 
     def __init__(self):
         self._embedding_client = None
-        self._embedding_model = config.get('ollama.embedding_model', 'nomic-embed-text:latest')
-        self._embedding_base_url = config.get('ollama.llm_base_url', 'http://localhost:11434')
-        self._similarity_threshold = config.get('vector_store.similarity_threshold', 0.1)
+        self._embedding_model = None
+        self._embedding_provider = config.get('embedding.provider', '') or config.get('llm.provider', '')
+        self._ollama_base_url = config.get('ollama.llm_base_url', '')
+        self._ollama_embedding_model = config.get('ollama.embedding_model', '')
+        self._openai_api_key = config.get('openai.api_key', '')
+        self._openai_embedding_model = config.get('openai.embedding_model', '')
+        self._openai_base_url = config.get('openai.base_url', '')
+        self._local_embedding_path = config.get('embedding.local_model_path', '')
+        # Fallback threshold for callers that pass no params: the hybrid retriever's own
+        # value (settings.yaml `retriever.similarity_threshold`) wins over the
+        # component-level vector_store value.
+        self._similarity_threshold = config.get(
+            'retriever.similarity_threshold',
+            config.get('vector_store.similarity_threshold', 0.1)
+        )
         self._diagnostic_enabled = config.get('recall_diagnostic.enabled', True)
         self._full_scan_limit = config.get('recall_diagnostic.full_scan_limit', 500)
 
     def _get_embedding_client(self):
-        """Get Embedding client (lazy loading)"""
-        if self._embedding_client is None:
-            try:
+        """Get Embedding client (lazy loading) — selected by embedding.provider"""
+        if self._embedding_client is not None:
+            return self._embedding_client
+
+        provider = self._embedding_provider
+        try:
+            if provider == 'local':
+                from sentence_transformers import SentenceTransformer
+                self._embedding_client = SentenceTransformer(self._local_embedding_path)
+                logger.info(f"RecallDiagnostic — local HF embedding loaded: {self._local_embedding_path}")
+            elif provider == 'openai':
+                import requests
+                self._embedding_client = requests  # reuse for API calls
+                logger.info(f"RecallDiagnostic — OpenAI embedding client ready")
+            else:
+                # Ollama (default)
                 import ollama
-                self._embedding_client = ollama.Client(host=self._embedding_base_url)
-                logger.info(f"[Resoinse Process] Embedding client initialized at: {self._embedding_base_url}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Embedding client: {e}")
-                raise
+                self._embedding_client = ollama.Client(host=self._ollama_base_url)
+                logger.info(f"RecallDiagnostic — Ollama embedding client at: {self._ollama_base_url}")
+        except Exception as e:
+            logger.error(f"Failed to initialize embedding client for provider '{provider}': {e}")
+            raise
         return self._embedding_client
 
     def _get_embedding(self, text: str) -> List[float]:
-        """Get Embedding vector for text"""
+        """Get Embedding vector for text — dispatched per provider"""
         try:
+            provider = self._embedding_provider
             client = self._get_embedding_client()
-            response = client.embeddings(model=self._embedding_model, prompt=text)
-            return response.get('embedding', [])
+
+            if provider == 'local':
+                vec = client.encode(text, normalize_embeddings=True)
+                return vec.tolist()
+            elif provider == 'openai':
+                import requests
+                url = f"{self._openai_base_url}/embeddings"
+                resp = requests.post(url, headers={
+                    'Authorization': f'Bearer {self._openai_api_key}',
+                    'Content-Type': 'application/json'
+                }, json={'model': self._openai_embedding_model, 'input': text}, timeout=30)
+                resp.raise_for_status()
+                return resp.json().get('data', [{}])[0].get('embedding', [])
+            else:
+                # Ollama (default)
+                response = client.embeddings(model=self._ollama_embedding_model, prompt=text)
+                return response.get('embedding', [])
         except Exception as e:
             logger.error(f"Failed to get Embedding vector: {e}")
             return []
@@ -106,7 +147,7 @@ class RecallDiagnostic:
             return {'enabled': False, 'diagnosis': []}
 
         try:
-            logger.debug(f"[Resoinse Process] Starting non-recall diagnosis for knowledge base: {kb_id}, Query: {query[:50]}...")
+            logger.debug(f"[Response Process] Starting non-recall diagnosis for knowledge base: {kb_id}, Query: {query[:50]}...")
 
             diagnosis = {
                 'enabled': True,
@@ -206,7 +247,7 @@ class RecallDiagnostic:
 
             diagnosis['summary'] = self._generate_summary(diagnosis)
 
-            logger.debug(f"[Resoinse Process] Non-recall diagnosis completed, found {len(diagnosis['diagnosis_items'])} diagnosis items")
+            logger.debug(f"[Response Process] Non-recall diagnosis completed, found {len(diagnosis['diagnosis_items'])} diagnosis items")
             return diagnosis
 
         except Exception as e:
@@ -278,7 +319,7 @@ class RecallDiagnostic:
                             'details': {'potential_misses': potential_misses}
                         })
                         diagnosis['summary'] = self._generate_summary(diagnosis)
-                    logger.debug(f"[Resoinse Process] Background non-recall scan completed, found {len(potential_misses)} potential non-recalled documents")
+                    logger.debug(f"[Response Process] Background non-recall scan completed, found {len(potential_misses)} potential non-recalled documents")
                     if on_complete:
                         await on_complete(diagnosis) if asyncio.iscoroutinefunction(on_complete) else on_complete(diagnosis)
                 except Exception as e:
@@ -331,8 +372,8 @@ class RecallDiagnostic:
             ]
 
             region_patterns = [
-                (r'(北京|上海|广州|深圳|杭州|成都|南京|武汉|西安|重庆)', 'city'),
-                (r'(华东|华南|华北|华中|西南|西北|东北)', 'region'),
+                # (r'(北京|上海|广州|深圳|杭州|成都|南京|武汉|西安|重庆)', 'city'),
+                # (r'(华东|华南|华北|华中|西南|西北|东北)', 'region'),
             ]
 
             for i in range(total_docs):

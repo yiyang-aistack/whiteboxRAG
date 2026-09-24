@@ -245,7 +245,7 @@ class DocumentParser:
             if total_chars < 50:
                 warnings.append(f"{file_name} parse result too short (only {total_chars} chars), likely scanned or encrypted PDF")
             
-            page_mark_count = text.count('--- 第 ')
+            page_mark_count = text.count('---  ')
             if page_mark_count > 1 and total_chars < 200:
                 warnings.append(f"{file_name} detected {page_mark_count} pages but few chars, likely image PDF")
             
@@ -287,7 +287,7 @@ class DocumentParser:
             else:
                 raise ValueError(_('parser.unsupported_format', None, ext))
         except Exception as e:
-            logger.error(f"提取文本失败 {file_path}: {e}")
+            logger.error(f"Failed to extract text from file {file_path}: {e}")
             raise
 
         return text
@@ -301,20 +301,20 @@ class DocumentParser:
                 for i, page in enumerate(pdf.pages):
                     try:
                         page_text = page.extract_text() or ""
-                        text_parts.append(f"\n--- 第 {i + 1} 页 ---\n{page_text}")
+                        text_parts.append(f"\n--- Page {i + 1}  ---\n{page_text}")
                     except Exception as e:
-                        logger.warning(f"PDF第 {i + 1} 页解析失败 (pdfplumber): {e}")
-            logger.info(f"使用 pdfplumber 解析 PDF: {file_path}")
+                        logger.warning(f"PDF page {i + 1} failed to parse (pdfplumber): {e}")
+            logger.info(f"Used pdfplumber to parse PDF: {file_path}")
         except ImportError:
-            logger.warning("pdfplumber 未安装，回退到 pypdf。建议安装 pdfplumber 以获得更好的中文支持: pip install pdfplumber")
+            logger.warning("pdfplumber not installed, fallback to pypdf. Suggest install pdfplumber: pip install pdfplumber")
             from pypdf import PdfReader
             reader = PdfReader(file_path)
             for i, page in enumerate(reader.pages):
                 try:
                     page_text = page.extract_text() or ""
-                    text_parts.append(f"\n--- 第 {i + 1} 页 ---\n{page_text}")
+                    text_parts.append(f"\n--- Page {i + 1}  ---\n{page_text}")
                 except Exception as e:
-                    logger.warning(f"PDF第 {i + 1} 页解析失败 (pypdf): {e}")
+                    logger.warning(f"PDF Page {i + 1} failed to parse (pypdf): {e}")
 
         return "\n".join(text_parts)
 
@@ -366,7 +366,7 @@ class DocumentParser:
         text_parts = []
 
         for i, slide in enumerate(prs.slides):
-            text_parts.append(f"\n--- 第 {i + 1} 页 ---\n")
+            text_parts.append(f"\n--- Page {i + 1}  ---\n")
             for shape in slide.shapes:
                 if hasattr(shape, "text") and shape.text.strip():
                     text_parts.append(shape.text)
@@ -533,7 +533,7 @@ class DocumentParser:
         files = [f for f in dir_path.iterdir() if f.is_file() and self.is_supported(str(f))]
         total_files = len(files)
 
-        logger.info(f"开始批量解析目录: {dir_path}, 共 {total_files} 个文件, 场景: {scenario_id or '默认'}")
+        logger.info(f"Start parsing directory: {dir_path}, total {total_files} files, scenario: {scenario_id or 'default'}")
 
         for i, file_path in enumerate(files):
             try:
@@ -545,7 +545,7 @@ class DocumentParser:
                 chunks = self.parse_file(str(file_path), file_progress, scenario_id)
                 result[file_path.name] = chunks
             except Exception as e:
-                logger.error(f"解析文件失败 {file_path}: {e}")
+                logger.error(f"Failed to parse file {file_path}: {e}")
                 result[file_path.name] = []
 
         return result

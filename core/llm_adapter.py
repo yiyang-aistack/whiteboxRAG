@@ -82,7 +82,7 @@ class OllamaAdapter(LLMAdapter):
 
     def __init__(self, base_url: str = None, timeout: int = 60):
         if base_url is None:
-            base_url = config.get('ollama.llm_base_url', 'http://localhost:11434')
+            base_url = config.get('ollama.llm_base_url', '')
         self.base_url = base_url
         self.timeout = timeout
         self._client = None
@@ -148,7 +148,7 @@ class OpenAIAdapter(LLMAdapter):
 
     def __init__(self, api_key: str, base_url: str = None, timeout: int = 60):
         self.api_key = api_key
-        self.base_url = base_url or config.get('openai.base_url', 'https://api.openai.com/v1')
+        self.base_url = base_url or config.get('openai.base_url', '')
         self.timeout = timeout
 
     def _make_request(self, endpoint: str, method: str = 'POST', **kwargs) -> Dict:
@@ -255,14 +255,19 @@ class LLMAdapterFactory:
             LLM adapter instance
         """
         if provider is None:
-            provider = config.get('llm.provider', 'ollama')
+            provider = config.get('llm.provider', '')
+        provider = str(provider).strip().lower()
 
         if provider in cls._adapters:
             return cls._adapters[provider]
 
+        # Resolve the base URL for the provider being built, not for the configured LLM
+        # provider: an embedding backend chosen independently (EMBEDDING_PROVIDER) must get
+        # its own URL, otherwise an Ollama adapter is pointed at the OpenAI endpoint or vice
+        # versa and every call fails.
         if provider == 'ollama':
             adapter = OllamaAdapter(
-                base_url=config.get_llm_base_url(),
+                base_url=config.get_llm_base_url('ollama'),
                 timeout=config.get('ollama.timeout', 60)
             )
         elif provider == 'openai':
@@ -271,7 +276,7 @@ class LLMAdapterFactory:
             api_key = config.get('openai.api_key', '')
             adapter = OpenAIAdapter(
                 api_key=api_key,
-                base_url=config.get_llm_base_url(),
+                base_url=config.get_llm_base_url('openai'),
                 timeout=config.get('openai.timeout', 60)
             )
         else:

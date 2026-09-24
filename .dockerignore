@@ -14,6 +14,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+# uv creates .venv in the build context; it must never be copied into the image
+.venv/
+.uv/
 venv/
 env/
 ENV/
@@ -33,6 +36,8 @@ tests/
 assets/
 examples/
 *.md
+# Local lint configuration (gitignored, see .gitignore) — the runtime image never lints
+.flake8
 
 # OS noise
 .DS_Store

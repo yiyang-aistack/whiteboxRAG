@@ -21,11 +21,12 @@ class TypoChecker:
         self._common_typos: Dict[str, str] = {}
         self._load_typo_dict()
 
-        # Single-character typo mapping (lightweight rules, kept in code)
-        self._char_typos = {
-            '则': '这',
-            '那': '哪',
-        }
+        # NOTE: there used to be a single-character map here ({'则': '这', '那': '哪'})
+        # applied to the whole query with str.replace. It corrupted far more than it fixed:
+        # 原则/否则/规则/准则 became 原这/否这/规这/准这, and the corrupted string is what BM25
+        # and the embedding model were given. The phrase dictionary in config/typo_dict.yaml
+        # already covers the intended cases (则个→这个, 则么→这么, ...) without that damage, so
+        # corrections are only ever applied to whole dictionary phrases.
 
     def _load_typo_dict(self):
         """Load typo dictionary from config/typo_dict.yaml"""
@@ -83,31 +84,31 @@ class TypoChecker:
                 - has_correction: Whether there are corrections
         """
         corrections = []
-        corrected_text = text
 
-        for typo, correct in sorted(self._common_typos.items(), key=lambda x: -len(x[0])):
-            if typo in corrected_text:
-                positions = [m.start() for m in re.finditer(re.escape(typo), corrected_text)]
-                for pos in positions:
-                    corrections.append({
-                        'original': typo,
-                        'corrected': correct,
-                        'position': pos,
-                        'type': 'phrase'
-                    })
-                corrected_text = corrected_text.replace(typo, correct)
+        # Skip empty keys: they would make the alternation below match at every position.
+        phrases = {k: v for k, v in self._common_typos.items() if k}
+        if not phrases:
+            return {'corrected_text': text, 'corrections': [], 'has_correction': False}
 
-        for char, correct_char in self._char_typos.items():
-            if char != correct_char and char in corrected_text:
-                positions = [i for i, c in enumerate(corrected_text) if c == char]
-                for pos in positions:
-                    corrections.append({
-                        'original': char,
-                        'corrected': correct_char,
-                        'position': pos,
-                        'type': 'character'
-                    })
-                corrected_text = corrected_text.replace(char, correct_char)
+        # Single left-to-right pass over the ORIGINAL text. Longest key first so the
+        # alternation prefers the most specific match, and re.sub (unlike a sequence of
+        # str.replace calls) never re-scans text it has already substituted — otherwise a
+        # shorter key would match inside a replacement (则么办 -> 怎么办 -> 怎怎么办).
+        pattern = re.compile(
+            '|'.join(re.escape(key) for key in sorted(phrases, key=len, reverse=True))
+        )
+
+        def _record(match: 're.Match') -> str:
+            original = match.group(0)
+            corrections.append({
+                'original': original,
+                'corrected': phrases[original],
+                'position': match.start(),
+                'type': 'phrase'
+            })
+            return phrases[original]
+
+        corrected_text = pattern.sub(_record, text)
 
         return {
             'corrected_text': corrected_text,

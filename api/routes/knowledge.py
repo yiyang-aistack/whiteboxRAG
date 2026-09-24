@@ -4,7 +4,10 @@ Provides CRUD operations and document upload for knowledge bases
 """
 import os
 import shutil
+import tempfile
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -38,6 +41,9 @@ _doc_dir.mkdir(parents=True, exist_ok=True)
 # Metadata file
 _metadata_file = Path(config.get('knowledge_base.metadata_file', './storage/kb_metadata.json'))
 
+# How many leading bytes of an upload to keep for the magic-number check.
+_MIME_SNIFF_BYTES = 64 * 1024
+
 
 class CreateKnowledgeBaseRequest(BaseModel):
     """Create knowledge base request"""
@@ -65,8 +71,26 @@ class UploadResponse(BaseModel):
     message: str
 
 
+# Serialises every read-modify-write of the metadata file. It is read and written by the request
+# handlers on the event loop and by the ingestion worker threads, so without this a create or
+# delete racing an upload silently drops one of the two updates. Reentrant because the
+# transaction below holds it while the nested _load_metadata() / _save_metadata() re-acquire it.
+_metadata_lock = threading.RLock()
+
+
 def _load_metadata() -> Dict:
-    """Load knowledge base metadata"""
+    """Load knowledge base metadata.
+
+    Callers that mutate the result and save it back must hold `_metadata_lock` across the whole
+    read-modify-write — use the `_metadata_transaction()` context manager. A bare load/save pair
+    is a lost-update race: another request can write between the two calls.
+    """
+    with _metadata_lock:
+        return _read_metadata()
+
+
+def _read_metadata() -> Dict:
+    """Read the metadata file. The caller must already hold `_metadata_lock`."""
     if _metadata_file.exists():
         try:
             import json
@@ -78,13 +102,96 @@ def _load_metadata() -> Dict:
 
 
 def _save_metadata(metadata: Dict):
-    """Save knowledge base metadata"""
+    """Save knowledge base metadata atomically. See `_metadata_transaction()`.
+
+    Raises on failure. Swallowing the error would let a full disk or a permissions problem
+    report success while nothing was persisted, and the caller's next read would show the old
+    data with no indication that the write was lost.
+    """
+    with _metadata_lock:
+        _write_metadata(metadata)
+
+
+def _write_metadata(metadata: Dict):
+    """Write the metadata file atomically. The caller must already hold `_metadata_lock`.
+
+    The document is written to a temporary file in the same directory and then moved into place,
+    so a reader never sees a half-written file. The previous `open(..., 'w')` truncated the real
+    file first: an interrupted or concurrent write left invalid JSON behind, `_load_metadata()`
+    then returned `{}`, and every knowledge base disappeared at once.
+    """
+    import json
+    _metadata_file.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(_metadata_file.parent), prefix='.kb_metadata-', suffix='.tmp'
+    )
     try:
-        import json
-        with open(_metadata_file, 'w', encoding='utf-8') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
-    except Exception as e:
+        os.replace(tmp_path, _metadata_file)
+    except BaseException as e:
+        # The dump or the move failed: do not leave the temporary file behind.
         logger.error(f"Save metadata failed, error: {e}")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+async def _stream_upload_to(file: UploadFile, dest: Path, max_size: int, lang: Optional[str] = None) -> bytes:
+    """Write an upload to `dest` in chunks and return its leading bytes.
+
+    `await file.read()` buffers the whole request body in memory *before* any size check can run,
+    so a single large upload could exhaust RAM. Reading in chunks lets the transfer abort as soon
+    as the limit is crossed, and the partial file is removed on the way out.
+
+    The returned head is what the magic-number check needs; libmagic only inspects the leading
+    bytes, so there is no reason to keep the whole document around for it.
+    """
+    head = b''
+    received = 0
+    try:
+        with open(dest, 'wb') as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received > max_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=_('kb.file_too_large', lang, max_size / 1024 / 1024)
+                    )
+                if len(head) < _MIME_SNIFF_BYTES:
+                    head += chunk[:_MIME_SNIFF_BYTES - len(head)]
+                f.write(chunk)
+    except BaseException:
+        # Never leave a partial or oversized upload behind for the parser to pick up.
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        raise
+    return head
+
+
+@contextmanager
+def _metadata_transaction():
+    """Hold `_metadata_lock` across a read-modify-write of the metadata file.
+
+    Use it around any handler that loads the metadata, changes it and saves it back:
+
+        with _metadata_transaction():
+            metadata = _load_metadata()
+            ...
+            _save_metadata(metadata)
+
+    The lock is reentrant, so the two nested helpers are free to take it again. Nothing inside
+    the block may `await`: it would stall the event loop for every other request.
+    """
+    with _metadata_lock:
+        yield
 
 
 def _process_document_task(kb_id: str, file_path: str, file_name: str, scenario_id: Optional[str] = None, progress_callback=None, file_id: Optional[str] = None, chunk_size: Optional[int] = None, chunk_overlap: Optional[int] = None):
@@ -126,38 +233,40 @@ def _process_document_task(kb_id: str, file_path: str, file_name: str, scenario_
         if progress_callback:
             progress_callback(100, f"Document processed, successfully added {added} vectors")
 
-        # Update metadata
-        metadata = _load_metadata()
-        if kb_id in metadata:
-            stored_name = Path(file_path).name
-            # file_id is uniformly generated and passed by the caller (upload/update route), stored filename is uniformly {file_id}_{original_name},
-            # no longer relies on split('_')[0] inference, ensuring metadata file_id matches filename prefix.
-            if not file_id:
-                file_id = stored_name.split('_', 1)[0] if '_' in stored_name else str(uuid.uuid4())[:8]
-            file_info = {
-                'file_id': file_id,
-                'original_name': file_name,
-                'stored_name': stored_name,
-                'chunk_count': added,
-                'upload_date': datetime.now().isoformat()
-            }
+        # Update metadata. This runs on an ingestion worker thread while requests may be
+        # creating or deleting knowledge bases, so the read-modify-write must be serialised.
+        with _metadata_transaction():
+            metadata = _load_metadata()
+            if kb_id in metadata:
+                stored_name = Path(file_path).name
+                # file_id is uniformly generated and passed by the caller (upload/update route), stored filename is uniformly {file_id}_{original_name},
+                # no longer relies on split('_')[0] inference, ensuring metadata file_id matches filename prefix.
+                if not file_id:
+                    file_id = stored_name.split('_', 1)[0] if '_' in stored_name else str(uuid.uuid4())[:8]
+                file_info = {
+                    'file_id': file_id,
+                    'original_name': file_name,
+                    'stored_name': stored_name,
+                    'chunk_count': added,
+                    'upload_date': datetime.now().isoformat()
+                }
 
-            if 'files' not in metadata[kb_id]:
-                metadata[kb_id]['files'] = []
+                if 'files' not in metadata[kb_id]:
+                    metadata[kb_id]['files'] = []
 
-            # Update scenario: replace if same file_id exists; Upload scenario: append if new file_id doesn't exist
-            replaced = False
-            for i, f in enumerate(metadata[kb_id]['files']):
-                if f['file_id'] == file_id:
-                    metadata[kb_id]['files'][i] = file_info
-                    replaced = True
-                    break
-            if not replaced:
-                metadata[kb_id]['files'].append(file_info)
+                # Update scenario: replace if same file_id exists; Upload scenario: append if new file_id doesn't exist
+                replaced = False
+                for i, f in enumerate(metadata[kb_id]['files']):
+                    if f['file_id'] == file_id:
+                        metadata[kb_id]['files'][i] = file_info
+                        replaced = True
+                        break
+                if not replaced:
+                    metadata[kb_id]['files'].append(file_info)
 
-            metadata[kb_id]['document_count'] = len(metadata[kb_id]['files'])
-            metadata[kb_id]['chunk_count'] = metadata[kb_id].get('chunk_count', 0) + added
-            _save_metadata(metadata)
+                metadata[kb_id]['document_count'] = len(metadata[kb_id]['files'])
+                metadata[kb_id]['chunk_count'] = metadata[kb_id].get('chunk_count', 0) + added
+                _save_metadata(metadata)
 
         return {
             'file_name': file_name,
@@ -178,10 +287,10 @@ async def create_knowledge_base(request: CreateKnowledgeBaseRequest, http_reques
         lang = get_lang_from_request(http_request)
         kb_id = str(uuid.uuid4())[:8]
 
-        # Check quantity limit
-        metadata = _load_metadata()
         max_kbs = config.get('knowledge_base.max_knowledge_bases', 10)
-        if len(metadata) >= max_kbs:
+
+        # Cheap pre-check so an obviously over-limit request fails without building anything.
+        if len(_load_metadata()) >= max_kbs:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=_('kb.max_limit', lang, max_kbs)
@@ -210,17 +319,33 @@ async def create_knowledge_base(request: CreateKnowledgeBaseRequest, http_reques
         kb_doc_dir = _doc_dir / kb_id
         kb_doc_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save metadata (including scenario ID)
-        from datetime import datetime
-        metadata[kb_id] = {
-            'name': request.name,
-            'description': request.description,
-            'document_count': 0,
-            'chunk_count': 0,
-            'created_at': datetime.now().isoformat(),
-            'scenario_id': scenario_id
-        }
-        _save_metadata(metadata)
+        # Save metadata (including scenario ID). The count is re-read and re-checked here rather
+        # than reusing the pre-check result, so two concurrent creates cannot both pass the limit.
+        # Only the map update is inside the lock — create_collection above is slow and must not
+        # block every other knowledge-base request.
+        try:
+            with _metadata_transaction():
+                metadata = _load_metadata()
+                if len(metadata) >= max_kbs:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=_('kb.max_limit', lang, max_kbs)
+                    )
+                metadata[kb_id] = {
+                    'name': request.name,
+                    'description': request.description,
+                    'document_count': 0,
+                    'chunk_count': 0,
+                    'created_at': datetime.now().isoformat(),
+                    'scenario_id': scenario_id
+                }
+                _save_metadata(metadata)
+        except Exception:
+            # The registry entry is the source of truth: without it the collection and the
+            # document directory we just built are unreachable, so roll them back.
+            _vector_store.delete_collection(kb_id)
+            shutil.rmtree(kb_doc_dir, ignore_errors=True)
+            raise
 
         logger.info(f"Create knowledge base success: {kb_id} ({request.name}), scenario: {scenario_id or 'default'}")
 
@@ -250,24 +375,25 @@ async def delete_knowledge_base(kb_id: str, request: Request):
     """Delete the specified knowledge base"""
     try:
         lang = get_lang_from_request(request)
-        metadata = _load_metadata()
-        if kb_id not in metadata:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=_('kb.not_found', lang)
-            )
+        with _metadata_transaction():
+            metadata = _load_metadata()
+            if kb_id not in metadata:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=_('kb.not_found', lang)
+                )
 
-        # Delete vector collection
-        _vector_store.delete_collection(kb_id)
+            # Delete vector collection
+            _vector_store.delete_collection(kb_id)
 
-        # Delete document directory
-        kb_doc_dir = _doc_dir / kb_id
-        if kb_doc_dir.exists():
-            shutil.rmtree(kb_doc_dir)
+            # Delete document directory
+            kb_doc_dir = _doc_dir / kb_id
+            if kb_doc_dir.exists():
+                shutil.rmtree(kb_doc_dir)
 
-        # Delete metadata
-        del metadata[kb_id]
-        _save_metadata(metadata)
+            # Delete metadata
+            del metadata[kb_id]
+            _save_metadata(metadata)
 
         # Refresh BM25 cache
         _retriever.refresh_bm25_index(kb_id)
@@ -347,44 +473,10 @@ async def list_knowledge_bases(request: Request):
         )
 
 
-@router.get("/{kb_id}", response_model=Dict, summary="Get knowledge base details")
-async def get_knowledge_base(kb_id: str, request: Request):
-    """Get specified knowledge base details"""
-    try:
-        lang = get_lang_from_request(request)
-        metadata = _load_metadata()
-        if kb_id not in metadata:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=_('kb.not_found', lang)
-            )
-
-        info = metadata[kb_id]
-        chunk_count = _vector_store.get_document_count(kb_id)
-        scenario_id = info.get('scenario_id')
-
-        return {
-            'success': True,
-            'data': {
-                'kb_id': kb_id,
-                'name': info.get('name', ''),
-                'description': info.get('description', ''),
-                'document_count': info.get('document_count', 0),
-                'chunk_count': chunk_count,
-                'created_at': info.get('created_at', ''),
-                'scenario_id': scenario_id,
-                'scenario_name': _get_scenario_name(scenario_id)
-            }
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get knowledge base details failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_('api.internal_error', lang, str(e))
-        )
+# NOTE: GET /{kb_id} is registered at the very END of this module on purpose. Starlette
+# resolves routes in registration order and takes the first full match, so a catch-all path
+# parameter registered early swallows every later static sibling ("/synonyms", "/typos" would
+# bind kb_id="synonyms" and answer 404). Any new static GET route must be added above it.
 
 
 @router.post("/{kb_id}/upload", response_model=Dict, summary="Upload document to knowledge base")
@@ -438,26 +530,18 @@ async def upload_document(
         safe_name = f"{file_id}_{file_name}"
         file_path = safe_join(kb_doc_dir, safe_name)
 
-        content = await file.read()
-
-        # Check file size
+        # Stream to disk with the size limit enforced as we go; see _stream_upload_to().
         max_size = config.get('document_parser.max_file_size', 50) * 1024 * 1024
-        if len(content) > max_size:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=_('kb.file_too_large', lang, max_size / 1024 / 1024)
-            )
+        head = await _stream_upload_to(file, file_path, max_size, lang)
 
         # MIME type dual validation (Magic Number): prevent disguised attacks like virus.exe renamed to virus.pdf
-        mime_ok, mime_err = _document_parser.validate_mime_type(content, file_name)
+        mime_ok, mime_err = _document_parser.validate_mime_type(head, file_name)
         if not mime_ok:
+            file_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=mime_err
             )
-
-        with open(file_path, 'wb') as f:
-            f.write(content)
 
         # Get knowledge base scenario ID
         scenario_id = metadata[kb_id].get('scenario_id')
@@ -546,21 +630,23 @@ async def list_kb_files(kb_id: str, request: Request):
     """Get all files list in the specified knowledge base"""
     try:
         lang = get_lang_from_request(request)
-        metadata = _load_metadata()
-        if kb_id not in metadata:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=_('kb.not_found', lang)
-            )
+        with _metadata_transaction():
+            metadata = _load_metadata()
+            if kb_id not in metadata:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=_('kb.not_found', lang)
+                )
 
-        kb_info = metadata[kb_id]
-        files = kb_info.get('files', [])
+            kb_info = metadata[kb_id]
+            files = kb_info.get('files', [])
 
-        if not files and kb_info.get('document_count', 0) > 0:
-            files = _scan_kb_files(kb_id, metadata)
-            if files:
-                kb_info['files'] = files
-                _save_metadata(metadata)
+            # Lazy backfill for knowledge bases created before the file list was tracked.
+            if not files and kb_info.get('document_count', 0) > 0:
+                files = _scan_kb_files(kb_id, metadata)
+                if files:
+                    kb_info['files'] = files
+                    _save_metadata(metadata)
 
         return {
             'success': True,
@@ -650,47 +736,48 @@ async def delete_kb_file(kb_id: str, file_id: str, request: Request):
     """Delete the specified file in the knowledge base (also delete vector data)"""
     try:
         lang = get_lang_from_request(request)
-        metadata = _load_metadata()
-        if kb_id not in metadata:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=_('kb.not_found', lang)
-            )
+        with _metadata_transaction():
+            metadata = _load_metadata()
+            if kb_id not in metadata:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=_('kb.not_found', lang)
+                )
 
-        kb_info = metadata[kb_id]
-        files = kb_info.get('files', [])
+            kb_info = metadata[kb_id]
+            files = kb_info.get('files', [])
 
-        file_info = None
-        for i, f in enumerate(files):
-            if f.get('file_id') == file_id:
-                file_info = f
-                break
+            file_info = None
+            for i, f in enumerate(files):
+                if f.get('file_id') == file_id:
+                    file_info = f
+                    break
 
-        if not file_info:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=_('kb.file_not_found', lang)
-            )
+            if not file_info:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=_('kb.file_not_found', lang)
+                )
 
-        stored_name = file_info.get('stored_name', '')
-        original_name = file_info.get('original_name', '')
+            stored_name = file_info.get('stored_name', '')
+            original_name = file_info.get('original_name', '')
 
-        kb_doc_dir = _doc_dir / kb_id
+            kb_doc_dir = _doc_dir / kb_id
 
-        if stored_name:
-            # stored_name lives in metadata, which uploads from older versions may have
-            # poisoned with a traversal sequence: never trust it as a path segment.
-            file_path = safe_join(kb_doc_dir, stored_name)
-            if file_path.exists():
-                os.remove(file_path)
-                logger.info(f"Delete file from storage: {file_path}")
+            if stored_name:
+                # stored_name lives in metadata, which uploads from older versions may have
+                # poisoned with a traversal sequence: never trust it as a path segment.
+                file_path = safe_join(kb_doc_dir, stored_name)
+                if file_path.exists():
+                    os.remove(file_path)
+                    logger.info(f"Delete file from storage: {file_path}")
 
-        _vector_store.delete_documents_by_file(kb_id, original_name)
+            _vector_store.delete_documents_by_file(kb_id, original_name)
 
-        files = [f for f in files if f.get('file_id') != file_id]
-        kb_info['files'] = files
-        kb_info['document_count'] = len(files)
-        _save_metadata(metadata)
+            files = [f for f in files if f.get('file_id') != file_id]
+            kb_info['files'] = files
+            kb_info['document_count'] = len(files)
+            _save_metadata(metadata)
 
         _retriever.invalidate_bm25_index(kb_id)
 
@@ -771,24 +858,18 @@ async def update_kb_file(
         safe_name = f"{file_id}_{new_file_name}"
         file_path = safe_join(kb_doc_dir, safe_name)
 
-        content = await file.read()
+        # Stream to disk with the size limit enforced as we go; see _stream_upload_to().
         max_size = config.get('document_parser.max_file_size', 50) * 1024 * 1024
-        if len(content) > max_size:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=_('kb.file_too_large', lang, max_size / 1024 / 1024)
-            )
+        head = await _stream_upload_to(file, file_path, max_size, lang)
 
         # MIME type dual validation (Magic Number): prevent disguised attacks like virus.exe renamed to virus.pdf
-        mime_ok, mime_err = _document_parser.validate_mime_type(content, new_file_name)
+        mime_ok, mime_err = _document_parser.validate_mime_type(head, new_file_name)
         if not mime_ok:
+            file_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=mime_err
             )
-
-        with open(file_path, 'wb') as f:
-            f.write(content)
 
         if stored_name and stored_name != safe_name:
             old_file_path = safe_join(kb_doc_dir, stored_name)
@@ -800,7 +881,7 @@ async def update_kb_file(
         scenario_id = metadata[kb_id].get('scenario_id')
 
         task_id = task_manager.create_task(
-            f"更新文档: {new_file_name}",
+            f"Update document task: {new_file_name}",
             _process_document_task,
             kb_id=kb_id,
             file_path=str(file_path),
@@ -886,7 +967,7 @@ async def add_synonym(body: Dict, request: Request):
         except Exception:
             pass
 
-        logger.info(f"添加同义词: {term} -> {synonyms}")
+        logger.info(f"Added synonym config: {term} -> {synonyms}")
 
         return {
             'success': True,
@@ -898,14 +979,14 @@ async def add_synonym(body: Dict, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"添加同义词失败: {e}", exc_info=True)
+        logger.error(f"Add synonym config failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.delete("/synonyms/{term}", summary="删除同义词")
+@router.delete("/synonyms/{term}", summary="Delete synonym config")
 async def delete_synonym(term: str, request: Request, synonym: Optional[str] = None):
     """Delete synonym config"""
     try:
@@ -923,7 +1004,7 @@ async def delete_synonym(term: str, request: Request, synonym: Optional[str] = N
             pass
 
         if synonym:
-            logger.info(f"删除同义词: {term} -> {synonym}")
+            logger.info(f"Deleted synonym config: {term} -> {synonym}")
             return {
                 'success': True,
                 'term': term,
@@ -931,7 +1012,7 @@ async def delete_synonym(term: str, request: Request, synonym: Optional[str] = N
                 'message': _('kb.synonym_delete_success', lang, synonym)
             }
         else:
-            logger.info(f"删除同义词组: {term}")
+            logger.info(f"Deleted synonym group: {term}")
             return {
                 'success': True,
                 'term': term,
@@ -939,14 +1020,14 @@ async def delete_synonym(term: str, request: Request, synonym: Optional[str] = N
             }
 
     except Exception as e:
-        logger.error(f"删除同义词失败: {e}", exc_info=True)
+        logger.error(f"Failed to delete synonym config: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.get("/typos", summary="获取错别字规则")
+@router.get("/typos", summary="Get all typo rules")
 async def get_typos(request: Request):
     """Get all typo rules"""
     try:
@@ -959,14 +1040,14 @@ async def get_typos(request: Request):
             'total': len(typos)
         }
     except Exception as e:
-        logger.error(f"获取错别字规则失败: {e}", exc_info=True)
+        logger.error(f"Failed to get typo rules: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.post("/typos", summary="添加错别字规则")
+@router.post("/typos", summary="Add new typo rule")
 async def add_typo(body: Dict, request: Request):
     """Add new typo rule"""
     try:
@@ -984,7 +1065,7 @@ async def add_typo(body: Dict, request: Request):
 
         typo_checker.add_typo(typo, correction)
 
-        logger.info(f"添加错别字规则: {typo} -> {correction}")
+        logger.info(f"Added typo rule: {typo} -> {correction}")
 
         return {
             'success': True,
@@ -996,14 +1077,14 @@ async def add_typo(body: Dict, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"添加错别字规则失败: {e}", exc_info=True)
+        logger.error(f"Failed to add typo rule: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.delete("/typos/{typo}", summary="删除错别字规则")
+@router.delete("/typos/{typo}", summary="Delete typo rule")
 async def delete_typo(typo: str, request: Request):
     """Delete typo rule"""
     try:
@@ -1012,7 +1093,7 @@ async def delete_typo(typo: str, request: Request):
 
         typo_checker.remove_typo(typo)
 
-        logger.info(f"删除错别字规则: {typo}")
+        logger.info(f"Deleted typo rule: {typo}")
 
         return {
             'success': True,
@@ -1021,28 +1102,28 @@ async def delete_typo(typo: str, request: Request):
         }
 
     except Exception as e:
-        logger.error(f"删除错别字规则失败: {e}", exc_info=True)
+        logger.error(f"Failed to delete typo rule: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.post("/synonyms/reload", summary="热更新同义词词典")
+@router.post("/synonyms/reload", summary="Reload synonym Dictionary")
 async def reload_synonyms(request: Request):
     """Reload synonym dictionary from config/synonym_dict.yaml, no service restart needed"""
     try:
         lang = get_lang_from_request(request)
         # Reload the long-lived instance in retriever
         count = _retriever._query_rewriter.reload_synonym_dict()
-        logger.info(f"同义词词典热更新完成，共 {count} 个词条")
+        logger.info(f"Synonym dictionary reloaded, total {count} entries")
         return {
             'success': True,
             'count': count,
             'message': _('kb.synonym_add_success', lang)
         }
     except Exception as e:
-        logger.error(f"热更新同义词词典失败: {e}", exc_info=True)
+        logger.error(f"Reload synonym dictionary failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
@@ -1132,7 +1213,7 @@ async def get_raw_document(kb_id: str, file_id: str, request: Request):
 
         if ext in binary_exts:
             # Binary format, do not attempt text decoding
-            content = f"[此文件为二进制格式 ({ext})，不支持直接以文本方式预览，请使用对应的文件查看器打开]"
+            content = _('kb.binary_preview', lang, ext)
             encoding = 'binary'
         else:
             # Text format, attempt encoding detection
@@ -1180,14 +1261,14 @@ async def get_raw_document(kb_id: str, file_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取原始文档失败: {e}", exc_info=True)
+        logger.error(f"Failed to get raw document content: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.get("/{kb_id}/chunks", summary="获取知识库分块列表")
+@router.get("/{kb_id}/chunks", summary="Get Knowledge Base Document List of Chunks")
 async def get_kb_chunks(kb_id: str, request: Request, limit: int = 20, offset: int = 0):
     """Get all document chunk list in the knowledge base"""
     try:
@@ -1231,14 +1312,14 @@ async def get_kb_chunks(kb_id: str, request: Request, limit: int = 20, offset: i
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取分块列表失败: {e}", exc_info=True)
+        logger.error(f"Failed to get document chunk list: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))
         )
 
 
-@router.get("/{kb_id}/chunks/{chunk_id}", summary="获取分块详情及向量")
+@router.get("/{kb_id}/chunks/{chunk_id}", summary="Get Knowledge Base Document Chunk Detail")
 async def get_chunk_detail(kb_id: str, chunk_id: str, request: Request):
     """Get detailed info of a single chunk, including vector data"""
     try:
@@ -1290,7 +1371,48 @@ async def get_chunk_detail(kb_id: str, chunk_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取分块详情失败: {e}", exc_info=True)
+        logger.error(f"Failed to get document chunk detail: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=_('api.internal_error', lang, str(e))
+        )
+
+
+# Catch-all: keep this LAST in the module (see the note above the route table).
+@router.get("/{kb_id}", response_model=Dict, summary="Get knowledge base details")
+async def get_knowledge_base(kb_id: str, request: Request):
+    """Get specified knowledge base details"""
+    try:
+        lang = get_lang_from_request(request)
+        metadata = _load_metadata()
+        if kb_id not in metadata:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_('kb.not_found', lang)
+            )
+
+        info = metadata[kb_id]
+        chunk_count = _vector_store.get_document_count(kb_id)
+        scenario_id = info.get('scenario_id')
+
+        return {
+            'success': True,
+            'data': {
+                'kb_id': kb_id,
+                'name': info.get('name', ''),
+                'description': info.get('description', ''),
+                'document_count': info.get('document_count', 0),
+                'chunk_count': chunk_count,
+                'created_at': info.get('created_at', ''),
+                'scenario_id': scenario_id,
+                'scenario_name': _get_scenario_name(scenario_id)
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get knowledge base details failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('api.internal_error', lang, str(e))

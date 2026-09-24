@@ -1,0 +1,82 @@
+/* static/admin.html - page custom styles
+ * Split out of admin.html's inline <style>: sidebar transition, knowledge base cards, tabs,
+ * code preview, scrollbar, color-scheme and dark theme overrides. The Tailwind CDN provides the
+ * atomic classes, so this file only holds the custom styles it cannot express.
+ */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+.sidebar-transition {
+    transition: transform 0.3s ease-in-out, width 0.3s ease-in-out;
+}
+
+.kb-card.active {
+    border-color: #3b82f6;
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.code-preview {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.loading-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4) infinite;
+}
+
+@keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+}
+
+/* ===== Light / dark theme overrides ===== */
+html { color-scheme: light dark; }
+.dark { color-scheme: dark; }
+.dark body { background-color: #0f172a; }
+.dark ::-webkit-scrollbar-track { background: #1e293b; }
+.dark ::-webkit-scrollbar-thumb { background: #475569; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+.dark .bg-slate-100 { background-color: #0f172a !important; }
+.dark .bg-slate-50 { background-color: #1e293b !important; }
+.dark .bg-white { background-color: #1e293b !important; }
+.dark .bg-slate-200 { background-color: #334155 !important; }
+.dark .text-slate-800, .dark .text-slate-700 { color: #e2e8f0 !important; }
+.dark .text-slate-600 { color: #cbd5e1 !important; }
+.dark .text-slate-500 { color: #94a3b8 !important; }
+.dark .text-slate-400 { color: #64748b !important; }
+.dark .text-slate-300 { color: #475569 !important; }
+.dark .border-slate-200 { border-color: #334155 !important; }
+.dark .border-slate-100 { border-color: #1e293b !important; }
+.dark .border-slate-300 { border-color: #475569 !important; }
+.dark input, .dark textarea, .dark select {
+    background-color: #0f172a !important; color: #e2e8f0 !important; border-color: #475569 !important;
+}
+.dark input::placeholder, .dark textarea::placeholder { color: #64748b !important; }
+.dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+.dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+.dark .hover\:text-blue-600:hover { color: #60a5fa !important; }
+.dark .hover\:bg-blue-50:hover { background-color: rgba(30,58,138,0.4) !important; }
+.dark .bg-blue-50 { background-color: rgba(30,58,138,0.35) !important; }
+.dark .bg-green-50, .dark .bg-emerald-50 { background-color: rgba(20,83,45,0.35) !important; }
+.dark .bg-red-50 { background-color: rgba(127,29,29,0.4) !important; }
+.dark .bg-yellow-50, .dark .bg-amber-50 { background-color: rgba(113,63,18,0.4) !important; }
+.dark .bg-purple-50 { background-color: rgba(76,29,149,0.35) !important; }
+.dark .bg-black\/40, .dark .bg-black\/50 { background-color: rgba(0,0,0,0.65) !important; }
+.dark .kb-card.active { background: linear-gradient(135deg, rgba(30,58,138,0.4) 0%, rgba(29,78,216,0.25) 100%) !important; border-color: #3b82f6 !important; }
+.dark .code-preview { background-color: #0f172a !important; color: #cbd5e1 !important; }

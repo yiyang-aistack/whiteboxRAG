@@ -40,15 +40,23 @@ llm_pipeline:
 
 evaluation:
   enabled: true
+  # Metrics this scenario scores. `empty_response` and `hallucination_rate` are always
+  # evaluated as well (they gate the verdict), and `rejection_accuracy` only applies to
+  # questions the boundary detector flags as out of domain. Names must exist in
+  # core/evaluator.py -- unknown ones are logged and ignored.
   metrics:
-    - "retrieval_recall"
+    - "retrieval_score_avg"
+    - "retrieval_score_std"
     - "answer_faithfulness"
+    - "semantic_consistency"
+    - "citation_coverage"
     - "answer_relevance"
     - "response_length"
+  # Only the genuinely scenario-specific line is overridden here: customer service wants
+  # short answers. Everything else is inherited from `evaluation.target_values` in
+  # config/settings.yaml -- there is no per-scenario calibration data yet (every stored
+  # trace has scenario_id null), so inventing stricter lines would just be noise.
   target_values:
-    retrieval_recall: 0.7
-    answer_faithfulness: 0.85
-    answer_relevance: 0.8
     response_length:
       min: 50
       max: 500

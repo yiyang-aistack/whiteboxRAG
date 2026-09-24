@@ -13,7 +13,7 @@ from service.logger import get_logger
 
 logger = get_logger('api.scenario')
 
-router = APIRouter(prefix="/api/scenario", tags=["场景管理"])
+router = APIRouter(prefix="/api/scenario", tags=["Scenario"])
 
 
 class ScenarioInfo(BaseModel):
@@ -37,7 +37,7 @@ class ScenarioDetail(BaseModel):
     evaluation: Optional[Dict] = None
 
 
-@router.get("/list", response_model=Dict, summary="获取场景列表")
+@router.get("/list", response_model=Dict, summary="Get scenario list")
 async def list_scenarios(request: Request):
     """Get list of all available scenarios"""
     lang = get_lang_from_request(request)
@@ -51,14 +51,14 @@ async def list_scenarios(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"获取场景列表失败: {e}", exc_info=True)
+        logger.error(f"Failed to get scenario list: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('scenario.list_failed', lang)}: {str(e)}"
         )
 
 
-@router.get("/{scenario_id}", response_model=Dict, summary="获取场景详情")
+@router.get("/{scenario_id}", response_model=Dict, summary="Get scenario details")
 async def get_scenario(scenario_id: str, request: Request):
     """Get detailed config of a specific scenario"""
     try:
@@ -93,14 +93,14 @@ async def get_scenario(scenario_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取场景详情失败: {e}", exc_info=True)
+        logger.error(f"Failed to get scenario details: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('scenario.detail_failed', lang)}: {str(e)}"
         )
 
 
-@router.get("/{scenario_id}/params", response_model=Dict, summary="获取场景检索参数")
+@router.get("/{scenario_id}/params", response_model=Dict, summary="Get scenario retrieval parameters")
 async def get_scenario_params(scenario_id: str, request: Request):
     """Get retrieval-related parameters of a specific scenario (for frontend display)"""
     try:
@@ -140,14 +140,14 @@ async def get_scenario_params(scenario_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取场景参数失败: {e}", exc_info=True)
+        logger.error(f"Failed to get scenario retrieval parameters: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('scenario.params_failed', lang)}: {str(e)}"
         )
 
 
-@router.post("/{scenario_id}/validate", response_model=Dict, summary="验证场景配置")
+@router.post("/{scenario_id}/validate", response_model=Dict, summary="Validate scenario config")
 async def validate_scenario(scenario_id: str, request: Request):
     """Validate whether the scenario config is valid"""
     lang = get_lang_from_request(request)
@@ -168,19 +168,19 @@ async def validate_scenario(scenario_id: str, request: Request):
         checks = []
 
         if effective_config.get('document_parser', {}).get('chunk_size'):
-            checks.append({'name': '分块大小', 'status': 'ok'})
+            checks.append({'name': 'Chunk size', 'status': 'ok'})
         else:
-            checks.append({'name': '分块大小', 'status': 'warning', 'message': '未配置'})
+            checks.append({'name': 'Chunk size', 'status': 'warning', 'message': 'Not configured'})
 
         if effective_config.get('retriever', {}).get('mode'):
-            checks.append({'name': '检索模式', 'status': 'ok'})
+            checks.append({'name': 'Retrieval mode', 'status': 'ok'})
         else:
-            checks.append({'name': '检索模式', 'status': 'warning', 'message': '未配置'})
+            checks.append({'name': 'Retrieval mode', 'status': 'warning', 'message': 'Not configured'})
 
         if effective_config.get('llm_pipeline', {}).get('system_prompt'):
-            checks.append({'name': '系统提示词', 'status': 'ok'})
+            checks.append({'name': 'System prompt', 'status': 'ok'})
         else:
-            checks.append({'name': '系统提示词', 'status': 'warning', 'message': '未配置'})
+            checks.append({'name': 'System prompt', 'status': 'warning', 'message': 'Not configured'})
 
         all_ok = all(c['status'] == 'ok' for c in checks)
 
@@ -194,7 +194,7 @@ async def validate_scenario(scenario_id: str, request: Request):
         }
 
     except Exception as e:
-        logger.error(f"验证场景配置失败: {e}", exc_info=True)
+        logger.error(f"Failed to validate scenario config: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('scenario.validate_failed', lang)}: {str(e)}"

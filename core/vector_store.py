@@ -25,9 +25,30 @@ class VectorStoreManager:
         self.collection_prefix = config.get('vector_store.collection_prefix', 'kb_')
         self.top_k = config.get('vector_store.top_k', 5)
         self.similarity_threshold = config.get('vector_store.similarity_threshold', 0.3)
-        self.embedding_model = config.get('ollama.embedding_model', 'nomic-embed-text:latest')
-        self.embedding_dim = config.get('ollama.embedding_dim', 768)
-        self.ollama_base_url = config.get('ollama.llm_base_url', 'http://localhost:11434')
+        # LLM infrastructure values come exclusively from .env via config.
+        # The startup check in main.py validates these before the server launches.
+        self.llm_provider = config.get('llm.provider', '')
+        self.embedding_provider = config.get('embedding.provider', '')
+
+        # Ollama embedding fields (used when embedding.provider=ollama, or as fallback)
+        self.ollama_embedding_model = config.get('ollama.embedding_model', '')
+        self.ollama_base_url = config.get('ollama.llm_base_url', '')
+
+        # OpenAI embedding fields (used when embedding.provider=openai)
+        self.openai_embedding_model = config.get('openai.embedding_model', '')
+        self.openai_api_key = config.get('openai.api_key', '')
+        self.openai_base_url = config.get('openai.base_url', '')
+
+        # Local HuggingFace embedding (used when embedding.provider=local)
+        self.local_embedding_path = config.get('embedding.local_model_path', '')
+
+        # Dimension: pull from whichever provider is active
+        provider_dim_map = {
+            'ollama': config.get('ollama.embedding_dim', 768),
+            'openai': config.get('openai.embedding_dim', 1536),
+            'local': config.get('embedding.local_dim', 768),
+        }
+        self.embedding_dim = provider_dim_map.get(self.embedding_provider, 768)
 
         self._chroma_client = None
         self._collections = {}
@@ -42,22 +63,85 @@ class VectorStoreManager:
         return self._chroma_client
 
     def _get_embedding_func(self):
-        """Get Embedding function (based on Ollama)"""
-        if self._embedding_func is None:
-            try:
-                from chromadb.utils import embedding_functions
-                # Use Ollama Embedding
+        """Get Embedding function based on the configured embedding provider.
+
+        Supports three backends:
+          - 'ollama':  OllamaEmbeddingFunction (remote Ollama service)
+          - 'openai':  OpenAIEmbeddingFunction (or OpenAI-compatible)
+          - 'local':   SentenceTransformerEmbeddingFunction (local HF model)
+
+        Raises instead of silently substituting another model: a fallback would change the
+        embedding space behind the user's back (ChromaDB's default is a 384-dim MiniLM, and
+        it is downloaded on first use), producing vectors that cannot be compared with the
+        configured model's.
+        """
+        if self._embedding_func is not None:
+            return self._embedding_func
+
+        from chromadb.utils import embedding_functions
+
+        provider = (self.embedding_provider or self.llm_provider).lower()
+        try:
+            if provider == 'openai':
+                self._embedding_func = embedding_functions.OpenAIEmbeddingFunction(
+                    api_key=self.openai_api_key,
+                    model_name=self.openai_embedding_model,
+                    api_base=self.openai_base_url or None,
+                )
+                logger.info(f"OpenAI Embedding function initialized: {self.openai_embedding_model}")
+            elif provider == 'local':
+                if not self.local_embedding_path:
+                    raise ValueError("EMBEDDING_PROVIDER=local but LOCAL_EMBEDDING_MODEL_PATH is not set")
+                # sentence-transformers is an optional dependency (it pulls in torch):
+                # install it with `uv sync --extra local-embedding`.
+                self._embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=self.local_embedding_path
+                )
+                logger.info(f"Local HuggingFace Embedding function initialized: {self.local_embedding_path}")
+            else:
+                # Default / Ollama path
                 self._embedding_func = embedding_functions.OllamaEmbeddingFunction(
                     url=f"{self.ollama_base_url}/api/embeddings",
-                    model_name=self.embedding_model
+                    model_name=self.ollama_embedding_model
                 )
-                logger.info(f"Ollama Embedding函数初始化完成: {self.embedding_model}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Embedding function for Ollama model: {e}")
-                # Degrade to default Embedding
-                self._embedding_func = embedding_functions.DefaultEmbeddingFunction()
-                logger.warning("Default Embedding function used")
+                logger.info(f"Ollama Embedding function initialized: {self.ollama_embedding_model}")
+        except Exception as e:
+            hint = ""
+            if provider == 'local':
+                hint = (" Install the optional dependency with "
+                        "`uv sync --extra local-embedding`, or set EMBEDDING_PROVIDER to "
+                        "ollama/openai in .env.")
+            logger.error(f"Failed to initialize the embedding function for provider "
+                         f"'{provider}': {e}.{hint}")
+            raise RuntimeError(
+                f"Embedding provider '{provider}' could not be initialized: {e}.{hint}"
+            ) from e
         return self._embedding_func
+
+    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Embed texts with the very same function that produced the stored vectors.
+
+        Sentence-level tracing and the semantic-consistency metric compare an answer against the
+        retrieved context, so their similarity only means something when both sides are embedded
+        in the same space as retrieval. Routing them through here also removes the need for them
+        to know which provider is active — including 'local', which has no HTTP endpoint and so
+        cannot be reached through an LLM adapter at all.
+
+        Args:
+            texts: Texts to embed.
+
+        Returns:
+            One vector per input text, in the same order.
+
+        Raises:
+            RuntimeError: If the configured embedding provider cannot be initialized.
+        """
+        if not texts:
+            return []
+        # ChromaDB's embedding functions take the batch as their first positional argument in
+        # both the legacy (List[str]) and current (input) calling conventions.
+        vectors = self._get_embedding_func()(texts)
+        return [[float(x) for x in vector] for vector in vectors]
 
     def _get_collection_name(self, kb_id: str) -> str:
         """Generate collection name"""
@@ -87,7 +171,10 @@ class VectorStoreManager:
             collection = client.create_collection(
                 name=collection_name,
                 embedding_function=self._get_embedding_func(),
-                metadata={"kb_id": kb_id, "kb_name": kb_name}
+                # hnsw:space defaults to squared L2. The score conversion in search() is
+                # "1 - distance", which is only meaningful for cosine distance, so the space
+                # must be set explicitly or every similarity score is wrong.
+                metadata={"kb_id": kb_id, "kb_name": kb_name, "hnsw:space": "cosine"}
             )
 
             self._collections[kb_id] = collection
@@ -141,6 +228,44 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Failed to get collection {kb_id}: {e}")
             return None
+
+    def get_documents(self, kb_id: str) -> List[Dict]:
+        """Every stored chunk of a knowledge base, without initializing the embedding function.
+
+        `get_collection()` attaches the configured embedding function, and constructing it loads
+        the whole embedding model (seconds and hundreds of MB for a local model). The keyword index
+        only needs the texts, and a BM25 rebuild happens on the first query after a restart - so
+        paying the model load there delayed the index past every bounded wait while the vector
+        route loaded the same model on its own path anyway.
+
+        Args:
+            kb_id: Knowledge base ID
+
+        Returns:
+            One dict per chunk (`id`, `text`, `metadata`); empty when the knowledge base does not
+            exist or has no documents.
+        """
+        try:
+            client = self._get_chroma_client()
+            # No embedding_function: `collection.get()` never embeds, and omitting it keeps the
+            # model out of this path (see the docstring above).
+            collection = client.get_collection(name=self._get_collection_name(kb_id))
+            result = collection.get(include=['documents', 'metadatas'])
+        except Exception as e:
+            logger.warning(f"Failed to read documents of knowledge base {kb_id}: {e}")
+            return []
+
+        ids = result.get('ids') or []
+        documents = result.get('documents') or []
+        metadatas = result.get('metadatas') or []
+        return [
+            {
+                'id': ids[i],
+                'text': documents[i] if i < len(documents) else "",
+                'metadata': metadatas[i] if i < len(metadatas) else {}
+            }
+            for i in range(len(ids))
+        ]
 
     def collection_exists(self, kb_id: str) -> bool:
         """Check if collection exists"""
@@ -426,3 +551,8 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Retrieved document from knowledge base {kb_id}/{doc_id}: {e}")
             return None
+
+
+# Shared instance. ChromaDB keeps one client per persist path, and every consumer must embed
+# with the same function, so the process uses a single manager rather than one per module.
+vector_store_manager = VectorStoreManager()

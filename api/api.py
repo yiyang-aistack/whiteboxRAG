@@ -1,3 +1,7 @@
+# Copyright (c) 2023-2026 JunSu - AI
+# Released under the MIT License.
+# See LICENSE file for full license text.
+
 """
 FastAPI main application entry
 Integrates all routes, middleware and static file serving
@@ -85,7 +89,8 @@ def create_app() -> FastAPI:
             'storage/logs',
             'storage/tasks',
             'storage/monitor',
-            'storage/traces'
+            'storage/traces',
+            'storage/abtest_results'
         ]
         for d in storage_dirs:
             Path(d).mkdir(parents=True, exist_ok=True)
@@ -267,7 +272,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "api.api:app",
-        host=config.get('system.host', '0.0.0.0'),
+        host=config.get('system.host', '127.0.0.1'),
         port=config.get('system.port', 8080),
         reload=config.get('system.debug', False),
         workers=1  # Single worker to avoid multi-process state inconsistency

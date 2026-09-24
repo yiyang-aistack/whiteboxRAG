@@ -13,10 +13,11 @@ from config import config
 from core.evaluator import RAGEvaluator
 from service.i18n import _, get_lang_from_request
 from service.logger import get_logger
+from service.path_safety import safe_join
 
 logger = get_logger('api.evaluation')
 
-router = APIRouter(prefix="/api/evaluation", tags=["评估管理"])
+router = APIRouter(prefix="/api/evaluation", tags=["evaluation"])
 
 _evaluator = None
 
@@ -31,15 +32,15 @@ def _get_evaluator():
 
 class EvaluationRequest(BaseModel):
     """Evaluation request"""
-    query: str = Field(..., description="用户查询")
-    context_results: List[Dict] = Field(..., description="检索上下文结果")
-    answer: str = Field(..., description="回答文本")
-    scenario_id: Optional[str] = Field(None, description="场景ID")
+    query: str = Field(..., description="User query text")
+    context_results: List[Dict] = Field(..., description="Retrieved context results")
+    answer: str = Field(..., description="Answer text from the model")
+    scenario_id: Optional[str] = Field(None, description="Scenario ID for context")
 
 
 class BatchEvaluationRequest(BaseModel):
     """Batch evaluation request"""
-    items: List[EvaluationRequest] = Field(..., description="评估项列表")
+    items: List[EvaluationRequest] = Field(..., description="Batch of evaluation requests")
 
 
 class EvaluationReport(BaseModel):
@@ -53,7 +54,7 @@ class EvaluationReport(BaseModel):
     detailed_results: List[Dict]
 
 
-@router.post("/evaluate", response_model=Dict, summary="单条评估")
+@router.post("/evaluate", response_model=Dict, summary="Evaluate a single Q&A pair")
 async def evaluate(request: EvaluationRequest, http_request: Request):
     """
     Evaluate a single Q&A pair
@@ -74,14 +75,14 @@ async def evaluate(request: EvaluationRequest, http_request: Request):
         }
 
     except Exception as e:
-        logger.error(f"评估失败: {e}", exc_info=True)
+        logger.error(f"Evaluate failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('eval.failed', lang)}: {str(e)}"
         )
 
 
-@router.post("/batch", response_model=Dict, summary="批量评估")
+@router.post("/batch", response_model=Dict, summary="Batch evaluate multiple Q&A pairs")
 async def batch_evaluate(request: BatchEvaluationRequest, http_request: Request):
     """
     Batch evaluate multiple Q&A pairs
@@ -137,14 +138,14 @@ async def batch_evaluate(request: BatchEvaluationRequest, http_request: Request)
         }
 
     except Exception as e:
-        logger.error(f"批量评估失败: {e}", exc_info=True)
+        logger.error(f"Batch evaluation failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('eval.batch_failed', lang)}: {str(e)}"
         )
 
 
-@router.post("/report", response_model=Dict, summary="生成评估报告")
+@router.post("/report", response_model=Dict, summary="Generate evaluation report")
 async def generate_report(request: BatchEvaluationRequest, http_request: Request):
     """
     Generate evaluation report (includes save feature)
@@ -211,7 +212,7 @@ async def generate_report(request: BatchEvaluationRequest, http_request: Request
         with open(report_file, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"评估报告生成成功: {report_id}, 总条数: {len(request.items)}")
+        logger.info(f"Generate evaluation report successfully: {report_id}, Total items: {len(request.items)}")
 
         return {
             'success': True,
@@ -220,14 +221,14 @@ async def generate_report(request: BatchEvaluationRequest, http_request: Request
         }
 
     except Exception as e:
-        logger.error(f"生成评估报告失败: {e}", exc_info=True)
+        logger.error(f"Generate evaluation report failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('eval.report_generate_failed', lang)}: {str(e)}"
         )
 
 
-@router.get("/report/{report_id}", response_model=Dict, summary="获取评估报告")
+@router.get("/report/{report_id}", response_model=Dict, summary="Get evaluation report")
 async def get_report(report_id: str, http_request: Request):
     """
     Get a saved evaluation report
@@ -235,7 +236,9 @@ async def get_report(report_id: str, http_request: Request):
     lang = get_lang_from_request(http_request)
     try:
         report_dir = Path(config.get('evaluation.report_directory', './storage/evaluation'))
-        report_file = report_dir / f'{report_id}.json'
+        # report_id comes straight from the URL path: keep it a single path segment so a
+        # crafted id cannot read a *.json file outside the report directory.
+        report_file = safe_join(report_dir, f'{report_id}.json')
 
         if not report_file.exists():
             raise HTTPException(
@@ -254,14 +257,14 @@ async def get_report(report_id: str, http_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取评估报告失败: {e}", exc_info=True)
+        logger.error(f"Get evaluation report failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('eval.report_get_failed', lang)}: {str(e)}"
         )
 
 
-@router.get("/reports", response_model=Dict, summary="获取评估报告列表")
+@router.get("/reports", response_model=Dict, summary="List evaluation reports")
 async def list_reports(http_request: Request):
     """
     Get list of all evaluation reports
@@ -284,7 +287,7 @@ async def list_reports(http_request: Request):
                         'overall_score': report.get('overall_score', 0)
                     })
             except Exception as e:
-                logger.warning(f"读取报告文件失败: {json_file}: {e}")
+                logger.warning(f"Read report file failed: {json_file}: {e}")
 
         return {
             'success': True,
@@ -293,71 +296,99 @@ async def list_reports(http_request: Request):
         }
 
     except Exception as e:
-        logger.error(f"获取评估报告列表失败: {e}", exc_info=True)
+        logger.error(f"List evaluation reports failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('eval.report_list_failed', lang)}: {str(e)}"
         )
 
 
-@router.get("/metrics", response_model=Dict, summary="获取指标定义")
+@router.get("/metrics", response_model=Dict, summary="Get evaluation metrics")
 async def get_metrics(http_request: Request):
     """
     Get definition descriptions of all evaluation metrics
     """
     lang = get_lang_from_request(http_request)
     try:
+        # Rubric v2 metric catalogue; every entry states what the metric *actually*
+        # computes. (Rubric v1 shipped a "Retrieval Recall" whose implementation was an average
+        # similarity, and a "Context Utilization" that divided by the token set of the whole
+        # context, i.e. it measured answer length.)
         metrics_definition = {
-            'retrieval_recall': {
-                'name': '检索召回率',
-                'description': '检索结果的平均相似度分数，反映检索的召回质量',
-                'target': '越高越好',
+            'retrieval_score_avg': {
+                'name': 'Retrieval Quality (Average Similarity)',
+                'description': 'The average of the fused scores of the retrieved passages. Note that this is not recall (true recall requires annotated data): '
+                               'it measures "how relevant the retrieved items are", with a lower quality cap linked to the similarity threshold of the retrieval configuration',
+                'target': 'The higher the better',
                 'range': '[0, 1]'
             },
             'retrieval_score_std': {
-                'name': '检索分数标准差',
-                'description': '检索结果相似度的离散程度，反映结果的一致性',
-                'target': '越低越好',
+                'name': 'Retrieval Score Standard Deviation',
+                'description': 'The spread of the fused scores of the retrieved passages. Only applicable when recall is 1',
+                'target': 'The lower the better',
                 'range': '[0, 1]'
             },
             'answer_faithfulness': {
-                'name': '答案忠实度',
-                'description': '答案中能在上下文中找到的词比例，反映答案的忠实性',
-                'target': '越高越好',
+                'name': 'Answer Faithfulness',
+                'description': 'The semantic similarity of the answer with the retrieved context (Embedding cosine similarity); degrades to word coverage when embeddings are not available',
+                'target': 'The higher the better',
+                'range': '[0, 1]'
+            },
+            'semantic_consistency': {
+                'name': 'Semantic Consistency',
+                'description': 'The average of the semantic similarities of the answer with the context, used to detect sentences that do not match the context',
+                'target': 'The higher the better',
+                'range': '[0, 1]'
+            },
+            'citation_coverage': {
+                'name': 'Citation Coverage',
+                'description': 'The proportion of sentences with parsable citation markers',
+                'target': 'The higher the better',
                 'range': '[0, 1]'
             },
             'answer_relevance': {
-                'name': '答案相关性',
-                'description': '答案与查询的词重叠比例，反映答案的相关性',
-                'target': '越高越好',
+                'name': 'Answer Relevance',
+                'description': 'The semantic similarity of the answer with the question (Embedding cosine similarity); degrades to word overlap when embeddings are not available',
+                'target': 'The higher the better',
                 'range': '[0, 1]'
             },
-            'context_usage_ratio': {
-                'name': '上下文利用率',
-                'description': '上下文被答案使用的比例，反映上下文的利用效率',
-                'target': '越高越好',
+            'hallucination_rate': {
+                'name': 'Hallucination Rate',
+                'description': 'The proportion of sentences with a similarity below evaluation.hallucination_sim_floor',
+                'target': 'The lower the better',
+                'range': '[0, 1]'
+            },
+            'rejection_accuracy': {
+                'name': 'Rejection Accuracy',
+                'description': 'The proportion of sentences that are rejected as out-of-scope questions',
+                'target': 'The higher the better',  
                 'range': '[0, 1]'
             },
             'empty_response': {
-                'name': '空响应',
-                'description': '是否为空响应或无法回答的情况',
+                'name': 'Empty Response',
+                'description': 'Whether the answer is the default response when no relevant information is found',
                 'target': 'False',
                 'range': '[True, False]'
             },
             'response_length': {
-                'name': '响应长度',
-                'description': '答案的字符数',
-                'target': '在合理范围内',
+                'name': 'Response Length',
+                'description': 'The max length of the answer',
+                'target': 'Within reasonable range',
                 'range': '[0, ∞)'
             }
         }
 
+        # The rubric version travels with the catalogue: a client that caches metric
+        # definitions must not mix them with scores produced by another rubric.
+        evaluator = _get_evaluator()
         return {
             'success': True,
-            'data': metrics_definition
+            'data': metrics_definition,
+            'rubric_version': evaluator.rubric_version,
+            'pass_score': evaluator.pass_score
         }
     except Exception as e:
-        logger.error(f"获取指标定义失败: {e}", exc_info=True)
+        logger.error(f"Get metrics definition failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"{_('eval.metrics_get_failed', lang)}: {str(e)}"

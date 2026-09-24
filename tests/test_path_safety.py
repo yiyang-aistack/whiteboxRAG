@@ -63,13 +63,13 @@ class TestSafeJoin:
         assert joined == Path('./storage/optimized_docs/doc_opt.txt')
 
     def test_traversal_cannot_escape(self):
-        joined = safe_join('./storage/optimized_docs', '../../../requirements.txt')
-        assert joined.name == 'requirements.txt'
+        joined = safe_join('./storage/optimized_docs', '../../../pyproject.toml')
+        assert joined.name == 'pyproject.toml'
         assert '..' not in joined.parts
 
     def test_windows_style_traversal_cannot_escape(self):
-        joined = safe_join('./storage/optimized_docs', '..\\..\\requirements.txt')
-        assert joined.name == 'requirements.txt'
+        joined = safe_join('./storage/optimized_docs', '..\\..\\pyproject.toml')
+        assert joined.name == 'pyproject.toml'
         assert '..' not in joined.parts
 
     def test_multiple_segments_are_sanitized(self):
@@ -108,12 +108,13 @@ class TestDownloadEndpointRejectsTraversal:
             yield test_client
 
     def test_traversal_is_rejected(self, client):
-        response = client.get(self.endpoint, params={'file_name': '../../../requirements.txt'})
+        response = client.get(self.endpoint, params={'file_name': '../../../pyproject.toml'})
         assert response.status_code == 400, response.text
-        assert 'MIT License' not in response.text[:2000]
+        # pyproject.toml must never be served; [project] is its first section header
+        assert '[project]' not in response.text[:2000]
 
     def test_windows_traversal_is_rejected(self, client):
-        response = client.get(self.endpoint, params={'file_name': '..\\..\\requirements.txt'})
+        response = client.get(self.endpoint, params={'file_name': '..\\..\\pyproject.toml'})
         assert response.status_code == 400, response.text
 
     def test_absolute_path_is_rejected(self, client):

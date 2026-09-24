@@ -9,8 +9,8 @@ answer: the answer text, a per-sentence citation verdict and the evaluation metr
 
 The script talks to the REST API only, so the service must already be running:
 
-    python main.py --install          # or: docker compose up -d
-    python scripts/seed_demo.py
+    uv run python main.py --install   # or: docker compose up -d
+    uv run python scripts/seed_demo.py
 
 Exit code 0 on success, 1 on failure.
 """
@@ -23,22 +23,28 @@ from pathlib import Path
 
 try:
     import httpx
-except ImportError:  # pragma: no cover - httpx is declared in requirements.txt
-    print("[FAIL] httpx is required, run: pip install -r requirements.txt", file=sys.stderr)
+except ImportError:  # pragma: no cover - httpx is declared in pyproject.toml
+    print("[FAIL] httpx is required, run: uv sync", file=sys.stderr)
     sys.exit(1)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DOC = ROOT / "examples" / "demo" / "whiteBoxRAG_FAQ.txt"
-DEFAULT_QUERY = "混合检索里 BM25 的默认权重是多少？"
+DEFAULT_QUERY = "hybrid retrieval with BM25 weight"
 DEFAULT_KB_NAME = "whiteBoxRAG Demo KB"
 
 # confidence_level reported by core/sentence_tracing.py -> (marker, readable label)
 VERDICTS = {
+    # Citation check first: the sentence's [DOC_N] marker resolves to a chunk that was
+    # Citation check first: the sentence's [Document N] marker resolves to a chunk that was
+    # really in the prompt. This is evidence, not a similarity score.
+    "citation_verified": ("[CITE]", "cited document [n] is part of the retrieved context"),
     "direct_quote": ("[OK]  ", "direct evidence in the retrieved chunks"),
     "summary": ("[OK]  ", "faithful summary of the retrieved chunks"),
     "low_confidence": ("[WARN]", "low confidence, no close match"),
     "drift": ("[BAD] ", "unsupported drift (possible hallucination)"),
     "no_source": ("[BAD] ", "no source found"),
+    # Tracing itself failed (e.g. embedding backend down): NOT a hallucination verdict.
+    "unverified": ("[?]   ", "tracing unavailable (embedding failure), not a hallucination verdict"),
 }
 
 
@@ -70,7 +76,7 @@ def wait_for_server(client: httpx.Client, base_url: str, timeout: int) -> bool:
             last_error = exc.__class__.__name__
         time.sleep(2)
     fail(f"API not reachable within {timeout}s ({last_error}).")
-    print("       Start it with 'python main.py --install' or 'docker compose up -d'.", file=sys.stderr)
+    print("       Start it with 'uv run python main.py --install' or 'docker compose up -d'.", file=sys.stderr)
     return False
 
 
@@ -193,12 +199,19 @@ def report(payload: dict) -> None:
         )
         print(f"  {marker} {label}")
         print(f"        {item.get('sentence', '')[:100]}")
+        # Attribution route: citation (evidence) vs similarity (heuristic hint).
+        basis = item.get("attribution") or "none"
+        if basis == "similarity":
+            basis = "similarity heuristic (not a fact check)"
+        print(f"        basis={basis}")
 
     drift = payload.get("drift_analysis") or {}
     if drift:
-        print(f"  sentences={drift.get('total_sentences')}  direct_quote={drift.get('direct_quote_count')}  "
+        print(f"  sentences={drift.get('total_sentences')}  "
+              f"citation_verified={drift.get('citation_verified_count')}  "
+              f"direct_quote={drift.get('direct_quote_count')}  "
               f"summary={drift.get('summary_count')}  drift={drift.get('drift_count')}  "
-              f"drift_rate={drift.get('drift_rate')}")
+              f"unverified={drift.get('unverified_count')}  drift_rate={drift.get('drift_rate')}")
 
     evaluation = payload.get("evaluation") or {}
     if evaluation:

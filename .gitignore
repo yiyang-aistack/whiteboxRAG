@@ -20,10 +20,25 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environments
+# uv creates .venv/; venv/, env/ and ENV/ are kept for legacy / hand-made setups.
+.venv/
 venv/
 ENV/
 env/
+
+# uv
+# uv.lock IS committed on purpose (it is the reproducible lock); only local-only files are ignored.
+.uv/
+# Local uv settings, e.g. a personal package index mirror. Prefer the UV_* environment variables
+# (uv does NOT read .env files — export them in your shell, CI or Dockerfile) or, for a setting the
+# whole team should share, pyproject.toml -> [tool.uv]; force-add this file if it needs committing.
+uv.toml
+
+# Local lint configuration. Committed code must never depend on it: CI passes the exclusions that
+# keep .venv/ (uv creates the environment inside the repository) out of the lint run on the
+# command line. Recreate the file locally if you want the same behaviour when running flake8.
+.flake8
 
 # IDE
 .vscode/
@@ -41,6 +56,8 @@ storage/logs/*
 !storage/logs/.gitkeep
 storage/tasks/*
 !storage/tasks/.gitkeep
+storage/abtest_results/*
+!storage/abtest_results/.gitkeep
 storage/monitor/*
 !storage/monitor/.gitkeep
 storage/traces/*
@@ -112,3 +129,6 @@ datasets/
 # Application specific
 config/local_config.yaml
 config/secrets.yaml
+
+# graphify output (architecture diagram tool — local-only generated artifacts)
+/graphify-out/

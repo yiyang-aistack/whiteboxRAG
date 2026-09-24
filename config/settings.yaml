@@ -1,28 +1,32 @@
 # Enterprise RAG system configuration file
 # Lightweight deployment for 8G RAM CPU environments
 #
-# Sensitive / environment-specific values (API keys, service URLs, model names)
-# are managed via environment variables in .env (see .env.example).
-# Env vars take priority over the values declared here.
-# This file holds structural defaults and non-sensitive settings only.
+# IMPORTANT — LLM provider configuration moved to .env
+# ---------------------------------------------------
+# All LLM-related settings (provider choice, base URL, model names, API keys)
+# live in the .env file at the project root (copied from .env.example).
+# They are loaded by config/__init__.py via python-dotenv and injected into the
+# central config dict so that business modules never call os.getenv() directly.
+#
+# This file (settings.yaml) is for application structure, business rules and
+# non-sensitive technical defaults only. Keep it provider-agnostic.
 
 # System configuration
 system:
   app_name: "whiteBoxRAG"
   version: "1.0.0"
   debug: false
-  host: "0.0.0.0"
-  port: 8080
   max_workers: 4
-
-# LLM provider configuration
-# Env var override: LLM_PROVIDER (ollama | openai)
-llm:
-  provider: "ollama"
+  # Default language for backend logs and exception messages (zh-CN | en-US)
+  # API response language is still driven by the client's Accept-Language header / ?lang= query param.
+  # Env var override: DEFAULT_LANG
+  default_lang: "en-US"
 
 # Business scope boundary detection configuration
+# It is suggested to be disabled in production environment , instead of caliing LLM or Ai agent to replace
+# langchain deepAgent is good one to replace , or customized deepAgents like AgentSeed of Junsu AI
 boundary:
-  enabled: true
+  enabled: false
   # Confidence threshold for boundary detection
   confidence_threshold: 0.5
   # Semantic similarity threshold for boundary detection
@@ -38,13 +42,14 @@ boundary:
     - "Logistics"
     - "Consultation"
   # Blacklist keywords (hit to reject answer)
+  #   Warning: be cautious with this feature, as it can reject valid business questions.
   blacklist_keywords:
-    - "非法"
-    - "违法"
-    - "色情"
-    - "暴力"
-    - "赌博"
-    - "毒品"
+    - "illegal"
+    - "violation"
+    - "pornography"
+    - "violence"
+    - "gambling"
+    - "drugs"
   #   Business topics list (used for semantic boundary detection)
   business_topics:
     - "Product Usage and Operation Guide"
@@ -68,38 +73,17 @@ circuit_breaker:
   # Delay threshold for circuit breaker (exceed this delay to fail, unit: milliseconds)
   delay_threshold_ms: 30000
 
-# Ollama local model configuration
-# Env var overrides: OLLAMA_BASE_URL, OLLAMA_LLM_MODEL, OLLAMA_EMBEDDING_MODEL,
-#                    OLLAMA_EMBEDDING_DIM, OLLAMA_TIMEOUT, OLLAMA_MAX_RETRIES
-ollama:
-  llm_model: "qwen2.5:7b"
-  llm_base_url: "http://localhost:11434"
-  embedding_model: "nomic-embed-text:latest"
-  embedding_dim: 768
-  timeout: 60
-  max_retries: 3
-
-# OpenAI configuration (enable when LLM_PROVIDER=openai)
-# Env var overrides: OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_LLM_MODEL,
-#                    OPENAI_EMBEDDING_MODEL, OPENAI_EMBEDDING_DIM, OPENAI_TIMEOUT
-# IMPORTANT: never store the API key here — use the OPENAI_API_KEY env var in .env
-openai:
-  api_key: ""
-  base_url: "https://api.openai.com/v1"
-  llm_model: "gpt-4o"
-  embedding_model: "text-embedding-3-small"
-  embedding_dim: 1536
-  timeout: 60
-
 # ChromaDB vector store configuration
 vector_store:
   # Persistent storage directory
   persist_directory: "./storage/vectordb"
   # Collection prefix
   collection_prefix: "kb_"
-  # Vector retrieval top-k
+  # Vector retrieval top-k (component-level default: what the pure-vector index returns).
+  # The hybrid retriever uses `retriever.top_k` and only falls back to this value.
   top_k: 5
-  # Similarity threshold for vector retrieval (below this value not returned)
+  # Similarity threshold for vector retrieval (below this value not returned).
+  # Component-level default; the hybrid retriever prefers `retriever.similarity_threshold`.
   similarity_threshold: 0.1
 
 # BM25 configuration
@@ -108,6 +92,13 @@ bm25:
   top_k: 5
   # Tokenizer (jieba/whitespace)
   tokenizer: "jieba"
+  # Upper bound (ms) a retrieval waits for an in-flight BM25 index build before degrading to the
+  # remaining route(s). The index is built lazily on first use, so the first query after a restart
+  # answered from the vector route alone; with bm25_weight 0.6 that left every candidate below
+  # similarity_threshold and the query reported "no relevant information" while the second,
+  # identical query answered correctly. A rebuild is cheap (tens of ms on a typical knowledge
+  # base), so waiting keeps the first query identical to the second one.
+  build_wait_ms: 500
 
 # Document parser configuration
 document_parser:
@@ -117,24 +108,44 @@ document_parser:
     - ".docx"
     - ".doc"
     - ".txt"
-    - ".xlsx"
-    - ".xls"
-    - ".pptx"
+    - ".md"
   # Maximum file size (MB)
-  max_file_size: 50
+  max_file_size: 10
   # Text chunk size
   chunk_size: 512
   # Chunk overlap size
-  chunk_overlap: 50
+  chunk_overlap: 128
   # Batch workers
   batch_workers: 2
 
 # Hybrid retriever configuration
+# ---------------------------------------------------------------------------
+# Single source of truth for the hybrid retrieval defaults. Everything below is what a
+# query uses when the caller tunes nothing, and GET /api/chat/retrieval-defaults serves
+# this block verbatim: the web UI (static/index.html, static/ab_test.html) fills its
+# Retrieval Model / BM25 Weight / Similarity Threshold / Return Count inputs from that endpoint, so nothing in
+# the front-end hardcodes these numbers any more.
 retriever:
   # Retrieval mode (vector/bm25/hybrid)
   mode: "hybrid"
   # Hybrid BM25 weight (BM25 weight, vector weight = 1 - this value)
-  bm25_weight: 0.4
+  bm25_weight: 0.6
+  # Number of chunks finally kept for the prompt (hybrid retrieval result count)
+  top_k: 5
+  # Similarity threshold below which a retrieved chunk is dropped
+  similarity_threshold: 0.5
+  # A retrieval route that returns nothing must not keep its share of the fusion weight. The fused
+  # score is `bm25_weight * bm25 + vector_weight * vector`, so a live route can only reach its own
+  # weight: with bm25_weight 0.6 (vector weight 0.4) below similarity_threshold 0.5, an empty BM25
+  # route made *every* candidate unpassable - the answer said "no relevant information" although
+  # the vector route had found the chunk. When true, the weights of an empty route are
+  # redistributed onto the remaining route(s) for that query only (`debug_info.route_degraded`
+  # records it, and the retrieval funnel reports the effective weights).
+  reroute_on_empty_route: true
+  # Query rewrite stage on/off (A/B tests only override it when they send an explicit value)
+  query_rewrite_enabled: true
+  # Rerank stage on/off; when disabled, rerank_top_k collapses to top_k
+  rerank_enabled: true
   # Rerank top-k
   rerank_top_k: 10
   # Context compression configuration
@@ -147,12 +158,22 @@ retriever:
 
 # Async tasks configuration
 async_tasks:
-  # Task storage directory
+  # Task storage directory. Scratch space for running tasks: its contents are deleted once
+  # they are older than `timeout` * 3, so nothing that must outlive a task belongs here.
   task_directory: "./storage/tasks"
   # Task timeout (seconds)
   timeout: 300
   # Task cleanup interval (seconds)
   cleanup_interval: 3600
+
+# A/B test configuration
+abtest:
+  # Where finished A/B test results are kept. Deliberately NOT under async_tasks.task_directory:
+  # task files are swept by the cleanup job above, which deleted every saved A/B result about
+  # 15 minutes after it was written.
+  result_directory: "./storage/abtest_results"
+  # Days to keep A/B results (informational; no automatic purge is scheduled)
+  retention_days: 30
 
 # Logging configuration
 logging:
@@ -199,7 +220,7 @@ api:
   api_key: ""
   rate_limit: 60
 
-# 问答溯源配置
+# Question-answer tracing configuration
 trace:
   # Whether to enable trace records
   enabled: true
@@ -207,6 +228,136 @@ trace:
   trace_directory: "./storage/traces"
   # Maximum trace records per query
   max_trace_records: 1000
+
+# Sentence-level tracing (core/sentence_tracing.py). Every key below is read by that
+# module; the values are its built-in defaults, spelled out so they can be tuned.
+#
+# A verdict is a similarity HEURISTIC, never a fact check: only a resolvable [DocumentN]
+# citation counts as evidence (level `citation_verified`). Inside the heuristic an
+# absolute floor decides whether a sentence may claim anything at all, and the
+# sentence's rank inside this answer's own score distribution decides how strong the
+# claim may be — see SentenceTracer._decide_confidence.
+sentence_tracing:
+  # Absolute floors (cosine similarity, fused fine/coarse). Below the drift floor the
+  # sentence is reported as `drift`; the other two are the minimum similarity required
+  # before `summary` / `direct_quote` may be claimed.
+  abs_drift_floor: 0.35
+  abs_summary_floor: 0.55
+  abs_direct_quote_floor: 0.75
+  # Weights of the fine (answer sentence vs every sentence inside a chunk) and coarse
+  # (answer sentence vs the full chunk) signals; the two are fused by max().
+  fine_weight: 1.0
+  coarse_weight: 0.8
+  # Relative-rank anchors: a sentence may only be a direct quote if it is also in the
+  # top (1 - direct_quote_percentile) of this answer's scores, and a summary if it is
+  # in the top (1 - summary_percentile).
+  summary_percentile: 0.75
+  direct_quote_percentile: 0.90
+  # With fewer sentences than this, ranks carry no information -> floors only.
+  min_adaptive_samples: 3
+
+# Answer/source contradiction detection (core/contradiction.py). Numbers, amounts,
+# durations and dates are compared structurally (units are normalised, so 7 days and 1 week are
+# the same claim) and polarity phrases are compared as a second pass. The result is part of
+# the trace, so a trace can show "this sentence disagrees with the source".
+contradiction:
+  # Master switch; when false the detector is skipped on the Q&A path.
+  enabled: true
+  # A relative difference must exceed this ratio to be reported. 0.4 vs 0.6 is 0.33, so a
+  # wrong decimal place is caught; raise it to ignore small wording differences.
+  relative_tolerance: 0.2
+  # Differences at or below this absolute delta are ignored as rounding noise. The delta is
+  # measured in the claim's normalised unit (seconds, metres, grams, percentage points,
+  # count), which is why the default is 0: only the relative tolerance decides.
+  absolute_tolerance: 0.0
+  # Calendar dates within this many days of each other are not reported.
+  date_tolerance_days: 1
+  # Percentages additionally use an absolute floor in percentage points: a relative ratio
+  # hides material changes on a small base (50% vs 60% is only 17% relative).
+  percent_point_tolerance: 5
+  # Severity cut-offs, as relative differences (dates: in days, see the module docstring).
+  high_severity_ratio: 0.5
+  medium_severity_ratio: 0.2
+  # Maximum number of findings for one answer.
+  max_results: 20
+  # Only compare claims whose sentences share a topic token; without this, two unrelated
+  # numbers of the same document would be reported as contradicting each other.
+  require_shared_topic: true
+
+# Evaluation configuration
+evaluation:
+  # Whether the answer-quality evaluation stage runs on every query
+  enabled: true
+  # Directory holding generated evaluation reports (*.json), served by GET /api/evaluation/report/{id}
+  report_directory: "./storage/evaluation"
+
+  # ---------------------------------------------------------------------------
+  # Rubric v2 (core/evaluator.py). Every metric is normalized onto one 0-1 credit
+  # scale with two anchors: its pass line earns exactly `pass_score` credit and the
+  # ideal value (1.0 for "higher is better" ratio metrics, 0 for "lower is better"
+  # ones) earns 1.0. `overall_score` is the weighted mean of those credits and
+  # `is_passing` is that same score plus the gates below, so the score and the
+  # verdict can no longer disagree. Score is stamped with `rubric_version` --
+  # never compare a v2 score with a v1 score (both live in storage/traces).
+  # ---------------------------------------------------------------------------
+  # Emitted with every evaluation result; bump it whenever a scoring rule changes
+  rubric_version: "2.0"
+  # Credit a metric must earn to pass (and the same line `is_passing` uses)
+  pass_score: 0.7
+  # Minimum share of the configured weight that must be measurable for a verdict:
+  # protects against "we could not check, so it passes"
+  min_weight_coverage: 0.6
+  # Metric weights (renormalized over whatever is actually scored). Grounding is the
+  # heaviest group on purpose: rubric v1 counted answer-vs-context four times by
+  # accident and retrieval only once.
+  weights:
+    # retrieval quality: mean fused score + spread
+    retrieval_score_avg: 0.10
+    retrieval_score_std: 0.05
+    # grounding: is every sentence traceable?
+    answer_faithfulness: 0.22
+    semantic_consistency: 0.13
+    citation_coverage: 0.10
+    # relevance: does the answer address the question?
+    answer_relevance: 0.15
+    # safety: unsupported sentences + refusal accuracy (OOD questions only)
+    hallucination_rate: 0.15
+    rejection_accuracy: 0.05
+    # format: fallback answer and length band
+    empty_response: 0.03
+    response_length: 0.02
+  # Pass line per metric. Calibrated with scripts/evaluator_recalc.py against
+  # storage/traces -- a line is "the value a reviewer would call acceptable", not the
+  # corpus average (which would be meaningless by construction) and not a line so low
+  # that 90% of the traffic saturates it (that was rubric v1: 47% of the traces >= 0.9).
+  # `retrieval_score_avg` is anchored at `retriever.similarity_threshold` (0.5).
+  target_values:
+    retrieval_score_avg: 0.50
+    retrieval_score_std: 0.10
+    answer_faithfulness: 0.70
+    semantic_consistency: 0.50
+    citation_coverage: 0.45
+    answer_relevance: 0.50
+    hallucination_rate: 0.15
+    rejection_accuracy: 0.80
+    empty_response: false
+    response_length:
+      min: 50
+      max: 2000
+  # Cosine floor below which an answer sentence counts as unsupported. Keep it aligned
+  # with `sentence_tracing.abs_drift_floor`, otherwise the hallucination rate and the
+  # drift rate shown next to it disagree about the same answer.
+  hallucination_sim_floor: 0.35
+  # Low retrieval quality cap. The gate is derived, not hardcoded:
+  #   gate = retriever.similarity_threshold * retrieval_gate_ratio   (0.5 * 0.3 = 0.15)
+  # A mean fused score under the gate cannot earn more than `low_retrieval_cap`.
+  retrieval_gate_ratio: 0.3
+  low_retrieval_cap: 0.3
+  # Boundary detection: below this confidence the score is scaled by
+  # max(boundary_penalty_floor, confidence) and the reason is reported in
+  # quality_flags / adjustments.
+  boundary_confidence_min: 0.5
+  boundary_penalty_floor: 0.5
 
 # Recall diagnostic configuration
 recall_diagnostic:

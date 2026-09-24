@@ -171,7 +171,7 @@ class QueryRewriter:
                 'corrected_text': corrected_query,
                 'corrections': typo_result['corrections']
             }
-            logger.info(f"[Resoinse Process] Typo correction: {query} -> {corrected_query}")
+            logger.info(f"[Response Process] Typo correction: {query} -> {corrected_query}")
 
         key_terms = self._extract_key_terms(corrected_query)
         result['key_terms'] = key_terms
@@ -235,7 +235,7 @@ class QueryRewriter:
             all_terms.update(terms)
 
         self._term_mappings['knowledge_terms'] = list(all_terms)
-        logger.info(f'[Resoinse Process] Extracted {len(all_terms)} terms from knowledge base')
+        logger.info(f"[Response Process] Extracted {len(all_terms)} terms from knowledge base")
 
     def get_knowledge_terms(self) -> List[str]:
         """Get knowledge base terms"""
@@ -269,7 +269,7 @@ class QueryRewriter:
             suggestions.append(f'{main_term} material requirements?')
             
         if len(product_terms) >= 2:
-            suggestions.append(f'{product_terms[0]}和{product_terms[1]} performance parameters?')
+            suggestions.append(f'{product_terms[0]} and {product_terms[1]} performance parameters?')
         
         suggestions.append('Please provide detailed technical requirements for the product')
         suggestions.append('What are the quality standards and testing requirements for the product?')
@@ -293,7 +293,7 @@ class QueryRewriter:
                     elif isinstance(synonyms, str):
                         self._synonym_map[key] = [synonyms]
 
-                logger.info(f"[Resoinse Process] Loaded {len(self._synonym_map)} synonym groups from config file")
+                logger.info(f"[Response Process] Loaded {len(self._synonym_map)} synonym groups from config file")
             except Exception as e:
                 logger.error(f"Failed to load synonym dictionary: {e}")
                 self._synonym_map = {}
@@ -307,7 +307,7 @@ class QueryRewriter:
         Applies when config/synonym_dict.yaml is modified via API for immediate effect.
         """
         self._load_synonym_dict()
-        logger.info(f"[Resoinse Process] Synonym dictionary reloaded, current {len(self._synonym_map)} entries loaded")
+        logger.info(f"[Response Process] Synonym dictionary reloaded, current {len(self._synonym_map)} entries loaded")
         return len(self._synonym_map)
 
     def add_synonym(self, term: str, synonyms: List[str]):
@@ -323,7 +323,7 @@ class QueryRewriter:
         for synonym in synonyms:
             if synonym not in self._synonym_map[term]:
                 self._synonym_map[term].append(synonym)
-        logger.info(f"[Resoinse Process] Added synonym group: {term} -> {synonyms}")
+        logger.info(f"[Response Process] Added synonym group: {term} -> {synonyms}")
 
     def remove_synonym(self, term: str, synonym: str = None):
         """
@@ -336,11 +336,11 @@ class QueryRewriter:
         if synonym:
             if term in self._synonym_map and synonym in self._synonym_map[term]:
                 self._synonym_map[term].remove(synonym)
-                logger.info(f"[Resoinse Process] Removed synonym from group: {term} -> {synonym}")
+                logger.info(f"[Response Process] Removed synonym from group: {term} -> {synonym}")
         else:
             if term in self._synonym_map:
                 del self._synonym_map[term]
-                logger.info(f"[Resoinse Process] Removed synonym group: {term}")
+                logger.info(f"[Response Process] Removed synonym group: {term}")
 
     def list_synonyms(self) -> Dict[str, List[str]]:
         """Get all synonyms"""
@@ -352,6 +352,6 @@ class QueryRewriter:
             import yaml
             with open(self._synonym_dict_path, 'w', encoding='utf-8') as f:
                 yaml.dump(self._synonym_map, f, allow_unicode=True, indent=2)
-            logger.info(f"[Resoinse Process] Synonym dictionary saved to {self._synonym_dict_path}")
+            logger.info(f"[Response Process] Synonym dictionary saved to {self._synonym_dict_path}")
         except Exception as e:
             logger.error(f"Failed to save synonym dictionary: {e}")

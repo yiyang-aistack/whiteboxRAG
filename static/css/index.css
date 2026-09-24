@@ -1,0 +1,294 @@
+/* static/index.html - page custom styles
+ * Split out of index.html's inline <style> (the Tailwind CDN provides the atomic classes, so this
+ * file only holds the custom styles it cannot express).
+ * Content: custom scrollbar, streaming output cursor / loading dot animations, drag & drop upload
+ *       zone, sidebar transition, message bubble radii, white-box provenance colouring (sentence
+ *       confidence / badges / citation chips / contradiction markers) and the light / dark theme
+ *       overrides.
+ */
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Streaming output animation */
+.typing-cursor::after {
+    content: '▊';
+    animation: blink 1s infinite;
+}
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* Drag & drop zone */
+.drop-zone.drag-over {
+    border-color: #3b82f6 !important;
+    background-color: #eff6ff !important;
+}
+
+/* Sidebar transition */
+.sidebar-transition {
+    transition: transform 0.3s ease-in-out, width 0.3s ease-in-out;
+}
+
+/* Message bubbles */
+.message-user { border-radius: 18px 18px 4px 18px; }
+.message-assistant { border-radius: 18px 18px 18px 4px; }
+
+/* Loading animation */
+.loading-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4) infinite;
+}
+@keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+}
+
+/* Monitor card */
+.monitor-card {
+    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.9);
+}
+
+/* Knowledge base card selected state */
+.kb-card.active {
+    border-color: #3b82f6;
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+/* SSE event stream styles */
+.event-content { white-space: pre-wrap; word-break: break-word; }
+
+/* ===== White-box provenance: sentence confidence tinting / badges / citation chips ===== */
+.prov-sentence { border-radius: 3px; display: inline; }
+.prov-sentence.citation_verified { background: rgba(13, 148, 136, 0.12); }
+.prov-sentence.quoted { background: rgba(34, 197, 94, 0.08); }
+.prov-sentence.summary { background: rgba(234, 179, 8, 0.14); }
+.prov-sentence.low_confidence { background: rgba(249, 115, 22, 0.14); }
+.prov-sentence.no_source { background: rgba(239, 68, 68, 0.14); }
+/* Unverified: the tracing component failed, so the sentence is neither supported nor
+   a hallucination - neutral grey keeps the two apart. */
+.prov-sentence.unverified { background: rgba(100, 116, 139, 0.14); }
+/* Sentence tail: a single newline between sentences becomes <br>, paragraph breaks (>= 2 \n)
+   additionally get an inline-block as a visual separator */
+.prov-tail { display: inline-block; width: 0; }
+.prov-tail.prov-tail-para {
+    display: block;
+    height: 6px;
+    margin: 3px 0;
+    border-bottom: 1px dashed rgba(100, 116, 139, 0.18);
+}
+.prov-badge {
+    display: inline-block; margin-right: 4px; padding: 0 5px;
+    border-radius: 999px; font-size: 9px; line-height: 15px;
+    white-space: nowrap; cursor: help; vertical-align: middle;
+}
+/* Contradiction marker: independent of the confidence tint, because a sentence can
+   be well supported by a chunk and still disagree with it on a number. */
+.prov-contra-badge { background: #fee2e2; color: #b91c1c; }
+.prov-sentence.has-contradiction { outline: 1px dashed rgba(185, 28, 28, 0.55); }
+.prov-chip {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 0 4px; margin: 0 1px; border-radius: 4px;
+    font-size: 10px; line-height: 16px; cursor: pointer;
+    border: 1px solid transparent; vertical-align: baseline;
+}
+.prov-chip.valid { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+.prov-chip.invalid { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.prov-chip.neutral { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+.prov-chip:hover { filter: brightness(0.96); }
+.prov-focus { outline: 2px solid #3b82f6; outline-offset: 1px; }
+.prov-legend {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    font-size: 10px; line-height: 16px;
+}
+.dark .prov-chip.valid { background: rgba(30, 58, 138, 0.45); color: #93c5fd; border-color: #1e40af; }
+.dark .prov-chip.invalid { background: rgba(127, 29, 29, 0.5); color: #fca5a5; border-color: #7f1d1d; }
+.dark .prov-chip.neutral { background: #0f172a; color: #cbd5e1; border-color: #334155; }
+
+/* ===== Light / dark theme overrides ===== */
+html { color-scheme: light dark; }
+.dark { color-scheme: dark; }
+.dark body { background-color: #0f172a; }
+.dark ::-webkit-scrollbar-track { background: #1e293b; }
+.dark ::-webkit-scrollbar-thumb { background: #475569; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+.dark .bg-slate-100 { background-color: #0f172a !important; }
+.dark .bg-slate-50 { background-color: #1e293b !important; }
+.dark .bg-white { background-color: #1e293b !important; }
+.dark .bg-slate-200 { background-color: #334155 !important; }
+.dark .text-slate-800, .dark .text-slate-700 { color: #e2e8f0 !important; }
+.dark .text-slate-600 { color: #cbd5e1 !important; }
+.dark .text-slate-500 { color: #94a3b8 !important; }
+.dark .text-slate-400 { color: #64748b !important; }
+.dark .text-slate-300 { color: #475569 !important; }
+.dark .border-slate-200 { border-color: #334155 !important; }
+.dark .border-slate-100 { border-color: #1e293b !important; }
+.dark .border-slate-300 { border-color: #475569 !important; }
+.dark input, .dark textarea, .dark select {
+    background-color: #0f172a !important; color: #e2e8f0 !important; border-color: #475569 !important;
+}
+.dark input::placeholder, .dark textarea::placeholder { color: #64748b !important; }
+.dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+.dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+.dark .hover\:bg-slate-200:hover { background-color: #475569 !important; }
+.dark .hover\:text-blue-600:hover { color: #60a5fa !important; }
+.dark .hover\:text-blue-700:hover { color: #93c5fd !important; }
+.dark .hover\:bg-blue-50:hover { background-color: rgba(30,58,138,0.4) !important; }
+.dark .bg-blue-50 { background-color: rgba(30,58,138,0.35) !important; }
+.dark .bg-green-50, .dark .bg-emerald-50 { background-color: rgba(20,83,45,0.35) !important; }
+.dark .bg-red-50 { background-color: rgba(127,29,29,0.4) !important; }
+.dark .bg-yellow-50, .dark .bg-amber-50, .dark .bg-orange-50 { background-color: rgba(113,63,18,0.4) !important; }
+.dark .bg-purple-50 { background-color: rgba(76,29,149,0.35) !important; }
+.dark .bg-slate-50\/40 { background-color: rgba(30,41,59,0.4) !important; }
+.dark .bg-yellow-50\/40 { background-color: rgba(113,63,18,0.3) !important; }
+.dark .bg-black\/40, .dark .bg-black\/50 { background-color: rgba(0,0,0,0.65) !important; }
+.dark mark { background-color: #ca8a04 !important; color: #1e293b !important; }
+.dark .kb-card.active { background: linear-gradient(135deg, rgba(30,58,138,0.4) 0%, rgba(29,78,216,0.25) 100%) !important; border-color: #3b82f6 !important; }
+.dark .drop-zone { border-color: #475569 !important; background-color: #1e293b; }
+.dark .drop-zone.drag-over { background-color: rgba(30,58,138,0.3) !important; }
+.dark .message-ai { background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important; }
+.dark .typing-cursor::after { color: #94a3b8; }
+
+/* ===== Dark mode overrides for the Trace panel card backgrounds =====
+   Tailwind's gradient classes (from-/to-) do not switch automatically under darkMode:'class',
+   so background-image:none clears the gradient first and a low-saturation translucent colour
+   replaces it. */
+.dark .bg-gradient-to-br.from-amber-50.to-orange-50,
+.dark .bg-gradient-to-br.from-orange-50.to-amber-50 { background-image: none !important; background: linear-gradient(135deg, rgba(113,63,18,0.22), rgba(124,45,18,0.18)) !important; }
+.dark .bg-gradient-to-br.from-slate-50.to-blue-50 { background-image: none !important; background: linear-gradient(135deg, rgba(30,41,59,0.7), rgba(30,58,138,0.18)) !important; }
+.dark .bg-gradient-to-br.from-cyan-50.to-blue-50 { background-image: none !important; background: linear-gradient(135deg, rgba(21,94,117,0.22), rgba(30,58,138,0.18)) !important; }
+.dark .bg-gradient-to-br.from-emerald-50.to-teal-50 { background-image: none !important; background: linear-gradient(135deg, rgba(6,95,70,0.22), rgba(15,118,110,0.18)) !important; }
+.dark .bg-gradient-to-br.from-indigo-50.to-blue-50 { background-image: none !important; background: linear-gradient(135deg, rgba(67,56,202,0.22), rgba(30,58,138,0.18)) !important; }
+.dark .bg-gradient-to-br.from-blue-50.to-indigo-50 { background-image: none !important; background: linear-gradient(135deg, rgba(30,58,138,0.22), rgba(67,56,202,0.18)) !important; }
+.dark .bg-gradient-to-br.from-slate-50.to-slate-100 { background-image: none !important; background: rgba(30,41,59,0.6) !important; }
+
+/* Additional gradient overrides for the other directions (to-r / to-b), kept consistent with to-br */
+.dark .bg-gradient-to-r.from-blue-50.to-cyan-50, {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(30,58,138,0.22), rgba(21,94,117,0.18)) !important;
+}
+.dark .bg-gradient-to-r.from-amber-50.to-orange-50 {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(113,63,18,0.22), rgba(124,45,18,0.18)) !important;
+}
+.dark .bg-gradient-to-r.from-cyan-50.to-blue-50 {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(21,94,117,0.22), rgba(30,58,138,0.18)) !important;
+}
+.dark .bg-gradient-to-r.from-emerald-50.to-teal-50 {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(6,95,70,0.22), rgba(15,118,110,0.18)) !important;
+}
+.dark .bg-gradient-to-r.from-indigo-50.to-blue-50 {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(67,56,202,0.22), rgba(30,58,138,0.18)) !important;
+}
+.dark .bg-gradient-to-r.from-blue-50.to-indigo-50 {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(30,58,138,0.22), rgba(67,56,202,0.18)) !important;
+}
+.dark .bg-gradient-to-r.from-slate-50.to-blue-50 {
+    background-image: none !important;
+    background: linear-gradient(90deg, rgba(30,41,59,0.7), rgba(30,58,138,0.18)) !important;
+}
+
+/* border-* uses a darker grey or a translucent colour in dark mode */
+.dark .border-amber-100 { border-color: rgba(113,63,18,0.45) !important; }
+.dark .border-amber-200 { border-color: rgba(113,63,18,0.55) !important; }
+.dark .border-orange-100 { border-color: rgba(124,45,18,0.45) !important; }
+.dark .border-orange-200 { border-color: rgba(124,45,18,0.55) !important; }
+.dark .border-cyan-100 { border-color: rgba(21,94,117,0.45) !important; }
+.dark .border-emerald-100 { border-color: rgba(6,95,70,0.45) !important; }
+.dark .border-emerald-200 { border-color: rgba(6,95,70,0.55) !important; }
+.dark .border-teal-100 { border-color: rgba(15,118,110,0.45) !important; }
+.dark .border-indigo-100 { border-color: rgba(67,56,202,0.45) !important; }
+.dark .border-indigo-200 { border-color: rgba(67,56,202,0.55) !important; }
+.dark .border-blue-100 { border-color: rgba(30,58,138,0.45) !important; }
+.dark .border-blue-200 { border-color: rgba(30,58,138,0.55) !important; }
+.dark .border-purple-100 { border-color: rgba(107,33,168,0.45) !important; }
+.dark .border-purple-200 { border-color: rgba(107,33,168,0.55) !important; }
+.dark .border-green-100 { border-color: rgba(20,83,45,0.45) !important; }
+.dark .border-green-200 { border-color: rgba(20,83,45,0.55) !important; }
+.dark .border-yellow-100 { border-color: rgba(113,63,18,0.45) !important; }
+.dark .border-yellow-200 { border-color: rgba(113,63,18,0.55) !important; }
+.dark .border-red-100 { border-color: rgba(127,29,29,0.45) !important; }
+.dark .border-red-200 { border-color: rgba(127,29,29,0.55) !important; }
+
+/* text-* switches to a low-saturation, slightly brighter colour in dark mode (avoids a greyed-out / harsh look on dark backgrounds) */
+.dark .text-amber-800 { color: #fde68a !important; }
+.dark .text-amber-700 { color: #fbbf24 !important; }
+.dark .text-amber-600 { color: #f59e0b !important; }
+.dark .text-orange-700 { color: #fb923c !important; }
+.dark .text-purple-800 { color: #d8b4fe !important; }
+.dark .text-purple-700 { color: #c084fc !important; }
+.dark .text-purple-600 { color: #a78bfa !important; }
+.dark .text-purple-500 { color: #8b5cf6 !important; }
+.dark .text-emerald-700 { color: #6ee7b7 !important; }
+.dark .text-emerald-600 { color: #34d399 !important; }
+.dark .text-teal-700 { color: #5eead4 !important; }
+.dark .text-teal-600 { color: #2dd4bf !important; }
+.dark .text-teal-400 { color: #2dd4bf !important; }
+.dark .text-green-900 { color: #86efac !important; }
+.dark .text-green-800 { color: #86efac !important; }
+.dark .text-green-700 { color: #4ade80 !important; }
+.dark .text-green-600 { color: #4ade80 !important; }
+.dark .text-green-500 { color: #22c55e !important; }
+.dark .text-blue-800 { color: #60a5fa !important; }
+.dark .text-blue-700 { color: #93c5fd !important; }
+.dark .text-blue-600 { color: #60a5fa !important; }
+.dark .text-blue-500 { color: #3b82f6 !important; }
+.dark .text-red-700 { color: #fca5a5 !important; }
+.dark .text-red-600 { color: #f87171 !important; }
+.dark .text-red-500 { color: #ef4444 !important; }
+.dark .text-yellow-700 { color: #fde047 !important; }
+.dark .text-yellow-600 { color: #facc15 !important; }
+.dark .text-indigo-700 { color: #a5b4fc !important; }
+.dark .text-indigo-600 { color: #818cf8 !important; }
+
+/* bg-* with an opacity suffix (Tailwind does not generate the dark variants automatically) */
+.dark .bg-amber-100 { background-color: rgba(113,63,18,0.4) !important; }
+.dark .bg-orange-100 { background-color: rgba(124,45,18,0.4) !important; }
+.dark .bg-orange-50 { background-color: rgba(124,45,18,0.3) !important; }
+.dark .bg-yellow-100 { background-color: rgba(113,63,18,0.4) !important; }
+.dark .bg-yellow-100\/50 { background-color: rgba(113,63,18,0.3) !important; }
+.dark .bg-green-100 { background-color: rgba(20,83,45,0.4) !important; }
+.dark .bg-green-100\/50 { background-color: rgba(20,83,45,0.3) !important; }
+.dark .bg-green-50 { background-color: rgba(20,83,45,0.35) !important; }
+.dark .bg-purple-100 { background-color: rgba(107,33,168,0.4) !important; }
+.dark .bg-purple-100\/50 { background-color: rgba(107,33,168,0.3) !important; }
+.dark .bg-purple-50 { background-color: rgba(107,33,168,0.3) !important; }
+.dark .bg-indigo-100 { background-color: rgba(67,56,202,0.4) !important; }
+.dark .bg-indigo-50 { background-color: rgba(67,56,202,0.3) !important; }
+.dark .bg-indigo-50\/60 { background-color: rgba(67,56,202,0.22) !important; }
+.dark .bg-blue-100 { background-color: rgba(30,58,138,0.4) !important; }
+.dark .bg-blue-50 { background-color: rgba(30,58,138,0.3) !important; }
+.dark .bg-red-100 { background-color: rgba(127,29,29,0.4) !important; }
+.dark .bg-red-50\/40 { background-color: rgba(127,29,29,0.28) !important; }
+.dark .bg-red-50\/70 { background-color: rgba(127,29,29,0.38) !important; }
+.dark .bg-teal-50 { background-color: rgba(15,118,110,0.3) !important; }
+.dark .bg-teal-100 { background-color: rgba(15,118,110,0.4) !important; }
+.dark .bg-emerald-50 { background-color: rgba(6,95,70,0.3) !important; }
+.dark .bg-emerald-100 { background-color: rgba(6,95,70,0.4) !important; }
+.dark .bg-cyan-50 { background-color: rgba(21,94,117,0.3) !important; }
+.dark .bg-white { background-color: #1e293b !important; }
+.dark .bg-yellow-50\/40 { background-color: rgba(113,63,18,0.25) !important; }
+
+/* prov-sentence confidence tints get a higher opacity in dark mode so they stay visible */
+.dark .prov-sentence.citation_verified { background: rgba(20,184,166,0.22); }
+.dark .prov-sentence.quoted { background: rgba(74,222,128,0.18); }
+.dark .prov-sentence.summary { background: rgba(250,204,21,0.22); }
+.dark .prov-sentence.low_confidence { background: rgba(251,146,60,0.22); }
+.dark .prov-sentence.no_source { background: rgba(248,113,113,0.22); }
+.dark .prov-sentence.unverified { background: rgba(148,163,184,0.22); }
+.dark .prov-contra-badge { background: rgba(127,29,29,0.55) !important; color: #fecaca !important; }
+.dark .prov-sentence.has-contradiction { outline-color: rgba(252,165,165,0.6); }
+.dark .prov-chip.valid { background: rgba(30,58,138,0.5) !important; color: #93c5fd !important; border-color: rgba(30,58,138,0.6) !important; }
+.dark .prov-chip.invalid { background: rgba(127,29,29,0.5) !important; color: #fca5a5 !important; border-color: rgba(127,29,29,0.6) !important; }
+.dark .prov-chip.neutral { background: rgba(30,41,59,0.6) !important; color: #cbd5e1 !important; border-color: #334155 !important; }

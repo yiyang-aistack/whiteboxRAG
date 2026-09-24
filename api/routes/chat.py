@@ -9,9 +9,12 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from config import config
+from core.retriever import get_retrieval_defaults
 from service.i18n import _, get_lang_from_request
 from service.logger import get_logger
 from service.monitor import monitor
+from service.path_safety import safe_join
 
 logger = get_logger('api.chat')
 
@@ -50,6 +53,13 @@ class SimulateRequest(BaseModel):
     excluded_chunk_ids: Optional[List[str]] = Field(None, description="Excluded chunk ID list")
     compare_with_original: Optional[bool] = Field(False, description="Compare with original retrieval results (triggers extra LLM calls, may be slower)")
     scenario_id: Optional[str] = Field(None, description="Scenario ID")
+
+
+class MissScanRequest(BaseModel):
+    """On-demand miss scan: which chunks exist in the KB but never reached the prompt"""
+    kb_id: str = Field(..., description="Knowledge base ID")
+    query: str = Field(..., description="User question", min_length=1, max_length=1000)
+    scenario_id: Optional[str] = Field(None, description="Scenario ID (optional)")
 
 
 class FeedbackRequest(BaseModel):
@@ -276,15 +286,14 @@ async def get_trace(http_request: Request, request: TraceRequest = None, trace_i
 
 
 @router.get("/health", summary="Check LLM service health")
-async def check_health():
+async def check_health(http_request: Request):
     """Check if Ollama service and model are available"""
+    lang = get_lang_from_request(http_request)
     try:
         _check_llm_pipeline()
 
         health = _llm_pipeline.check_health()
         logger.info(f"Health check result: {health}")
-        logger.info(f"Available models type: {type(health.get('available_models'))}")
-        logger.info(f"Available models: {health.get('available_models')}")
 
         return {
             'success': True,
@@ -293,11 +302,34 @@ async def check_health():
 
     except Exception as e:
         logger.error(f"Health check exception: {e}", exc_info=True)
+        # Keep the standard {success, data, message} envelope on this path too. It used to return
+        # {success, healthy, error}, which no client understands: the UI reads `data`/`message`, and
+        # the Ollama-down case is exactly the one the endpoint exists to report.
         return {
             'success': False,
-            'healthy': False,
+            'data': {'healthy': False},
+            'message': _('chat.health_failed', lang),
             'error': str(e)
         }
+
+
+@router.get("/retrieval-defaults", summary="Get default hybrid retrieval parameters")
+async def retrieval_defaults():
+    """
+    Default hybrid retrieval parameters declared in config/settings.yaml (`retriever:`).
+
+    The web UI (static/js/abtest.js behind static/index.html, and static/ab_test.html) fills
+    its retrieval parameter inputs - mode, BM25 weight, similarity threshold, top_k - from
+    this endpoint instead of hardcoding them, so tuning settings.yaml is enough to change
+    what the UI offers.
+
+    Deliberately independent of the LLM pipeline: the correct defaults must be displayable
+    while the model backend is down, which is exactly when /api/chat/health cannot answer.
+    """
+    return {
+        'success': True,
+        'data': get_retrieval_defaults()
+    }
 
 
 @router.post("/simulate", summary="Simulate chat (hypothesis analysis)")
@@ -310,6 +342,9 @@ async def simulate_chat(request: SimulateRequest, http_request: Request):
     try:
         _check_llm_pipeline()
         lang = get_lang_from_request(http_request)
+
+        import time
+        start_time = time.time()
 
         scenario_id = _resolve_scenario_id(request.kb_id, request.scenario_id)
 
@@ -331,15 +366,19 @@ async def simulate_chat(request: SimulateRequest, http_request: Request):
         error = None
 
         try:
-            client = _llm_pipeline._get_ollama_client()
-            response = client.chat(
+            # Go through the shared LLM adapter. The previous implementation called a
+            # `_get_ollama_client()` helper that no longer exists on the pipeline, so every
+            # simulation silently fell back to "model unavailable" instead of regenerating.
+            adapter = _llm_pipeline._get_llm_adapter()
+            response = adapter.chat(
                 model=_llm_pipeline.llm_model,
-                messages=[
-                    {'role': 'user', 'content': prompt}
-                ],
+                messages=[{'role': 'user', 'content': prompt}],
                 stream=False
             )
-            answer = response.get('message', {}).get('content', '')
+            if isinstance(response, dict):
+                answer = (response.get('message') or {}).get('content', '') or ''
+            else:
+                answer = str(response or '')
         except Exception as e:
             error = str(e)
             logger.error(f"LLM call exception: {e}")
@@ -353,6 +392,16 @@ async def simulate_chat(request: SimulateRequest, http_request: Request):
             drift_analysis = sentence_tracer.analyze_drift(sentence_tracing)
         except Exception as e:
             logger.warning(f"Sentence tracing exception: {e}")
+
+        # Hypothesis analysis is exactly where a contradiction matters: after dropping a
+        # chunk the answer may start disagreeing with what is left in the prompt.
+        contradictions = []
+        try:
+            from core.contradiction import contradiction_detector
+            contradictions = contradiction_detector.detect(answer, filtered_chunks, lang=lang)
+            contradiction_detector.attach_to_sentences(sentence_tracing or [], contradictions)
+        except Exception as e:
+            logger.warning(f"Contradiction detection exception: {e}")
 
         original_result = None
         if request.compare_with_original:
@@ -374,10 +423,14 @@ async def simulate_chat(request: SimulateRequest, http_request: Request):
             'selected_chunks': request.selected_chunks,
             'filtered_chunks': filtered_chunks,
             'excluded_chunk_ids': request.excluded_chunk_ids,
+            'excluded_count': len(request.excluded_chunk_ids or []),
             'chunk_count': len(filtered_chunks),
             'scenario_id': scenario_id,
             'sentence_tracing': sentence_tracing,
             'drift_analysis': drift_analysis,
+            'contradictions': contradictions,
+            'contradiction_count': len(contradictions),
+            'duration': round(time.time() - start_time, 2),
             'error': error
         }
 
@@ -388,7 +441,8 @@ async def simulate_chat(request: SimulateRequest, http_request: Request):
                 'context': original_result.get('context'),
                 'evaluation': original_result.get('evaluation'),
                 'sentence_tracing': original_result.get('sentence_tracing'),
-                'drift_analysis': original_result.get('drift_analysis')
+                'drift_analysis': original_result.get('drift_analysis'),
+                'contradictions': original_result.get('contradictions') or []
             }
 
             if answer and original_result.get('answer'):
@@ -408,6 +462,99 @@ async def simulate_chat(request: SimulateRequest, http_request: Request):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('chat.simulate_failed', lang, str(e))
+        )
+
+
+def _run_miss_scan(kb_id: str, query: str, scenario_id: Optional[str], lang: Optional[str] = None) -> Dict:
+    """
+    Run the expensive "which chunks never reached the prompt" scan for one query.
+
+    Blocking on purpose: the caller offloads it to a thread so the event loop stays free.
+
+    Args:
+        kb_id: Knowledge base ID
+        query: User question
+        scenario_id: Scenario ID (optional)
+        lang: Language code for localized diagnosis text
+
+    Returns:
+        Diagnosis payload with potential misses, threshold and timing info
+    """
+    import time
+
+    from core.recall_diagnostic import recall_diagnostic
+
+    start = time.time()
+    retriever = _llm_pipeline.retriever
+
+    # Authoritative basis: re-run the very same retrieval the question used, so the scan
+    # (a) excludes exactly the chunks that reached the LLM and (b) compares the remaining
+    # chunks against the same similarity threshold.
+    retrieval = retriever.retrieve(kb_id, query, scenario_id=scenario_id)
+    retrieved_results = retrieval.get('results') or []
+    params = retriever.get_effective_params(scenario_id)
+
+    diagnosis = recall_diagnostic.diagnose(
+        kb_id=kb_id,
+        query=query,
+        retrieved_results=retrieved_results,
+        vector_store=retriever.vector_store,
+        params=params,
+        lang=lang,
+        debug=True,  # this endpoint exists precisely to run the full scan
+    )
+
+    return {
+        'query': query,
+        'kb_id': kb_id,
+        'scenario_id': scenario_id,
+        'retrieved_count': len(retrieved_results),
+        'threshold': params.get('similarity_threshold'),
+        'scan_limit': config.get('recall_diagnostic.full_scan_limit', 500),
+        'diagnostic_enabled': bool(diagnosis.get('enabled', False)),
+        'potential_misses': diagnosis.get('potential_misses') or [],
+        'diagnosis_summary': diagnosis.get('summary') or {},
+        'duration': round(time.time() - start, 2),
+    }
+
+
+@router.post("/miss-scan", summary="On-demand knowledge base miss scan")
+async def miss_scan(request: MissScanRequest, http_request: Request):
+    """
+    Scan the knowledge base for relevant chunks that were never recalled.
+
+    The normal chat flow skips this scan (it re-embeds every candidate and would double
+    retrieval latency), which is why a trace reports "missed documents scan skipped". This
+    endpoint runs it on demand - the UI exposes it as a button inside the retrieval funnel -
+    and returns the near-threshold chunks with a structured root cause for each one.
+    """
+    lang = get_lang_from_request(http_request)
+    try:
+        _check_llm_pipeline()
+
+        vector_store = _llm_pipeline.retriever.vector_store
+        if not vector_store.collection_exists(request.kb_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_('kb.not_found', lang)
+            )
+
+        scenario_id = _resolve_scenario_id(request.kb_id, request.scenario_id)
+
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, _run_miss_scan, request.kb_id, request.query, scenario_id, lang
+        )
+        return {'success': True, **result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Miss scan failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=_('chat.miss_scan_failed', lang, str(e))
         )
 
 
@@ -577,12 +724,18 @@ async def ab_test(request: ABTestRequest, http_request: Request):
                 **variant_params
             )
 
-            contradictions = []
-            try:
-                from core.sentence_tracing import sentence_tracer
-                contradictions = sentence_tracer.detect_contradictions(result['answer'], result['context'])
-            except Exception as e:
-                logger.warning(f"Semantic contradiction detection failed: {e}")
+            # query() already ran the structured check (core/contradiction.py) and returned
+            # its findings, so re-use them instead of paying for a second pass over the same
+            # answer; only compute them when an older pipeline did not provide them.
+            contradictions = result.get('contradictions')
+            if contradictions is None:
+                try:
+                    from core.sentence_tracing import sentence_tracer
+                    contradictions = sentence_tracer.detect_contradictions(
+                        result['answer'], result['context'], lang)
+                except Exception as e:
+                    logger.warning(f"Contradiction detection failed: {e}")
+                    contradictions = []
 
             results.append({
                 'name': variant.name,
@@ -593,10 +746,10 @@ async def ab_test(request: ABTestRequest, http_request: Request):
                 'has_results': result['has_results'],
                 'retrieval_mode': result['retrieval_mode'],
                 'duration': result['duration'],
-                'evaluation': result.get('evaluation'),
-                'intent_info': result.get('intent_info'),
-                'sentence_tracing': result.get('sentence_tracing'),
-                'drift_analysis': result.get('drift_analysis'),
+                'evaluation': result.get('evaluation') or {},
+                'intent_info': result.get('intent_info') or {},
+                'sentence_tracing': result.get('sentence_tracing') or [],
+                'drift_analysis': result.get('drift_analysis') or {},
                 'contradictions': contradictions,
                 'contradiction_count': len(contradictions),
                 'recall_diagnosis': result.get('recall_diagnosis', {}),
@@ -605,13 +758,16 @@ async def ab_test(request: ABTestRequest, http_request: Request):
 
         comparison = _compare_results(results)
 
-        # P1-3: Persist test results to storage/tasks/
+        # Persist the test result so it can be reviewed later. This must not live in
+        # async_tasks.task_directory: the TaskManager cleanup job deletes every *.json there
+        # once it is older than timeout * 3 (~15 minutes), which silently removed saved A/B
+        # results.
         import json as _json
         import uuid as _uuid
         from pathlib import Path as _Path
         from datetime import datetime as _dt
-        task_dir = _Path('./storage/tasks')
-        task_dir.mkdir(parents=True, exist_ok=True)
+        result_dir = _Path(config.get('abtest.result_directory', './storage/abtest_results'))
+        result_dir.mkdir(parents=True, exist_ok=True)
         task_id = str(_uuid.uuid4())
         task_data = {
             'task_id': task_id,
@@ -623,7 +779,7 @@ async def ab_test(request: ABTestRequest, http_request: Request):
             'created_at': _dt.now().isoformat()
         }
         try:
-            with open(task_dir / f'{task_id}.json', 'w', encoding='utf-8') as f:
+            with open(result_dir / f'{task_id}.json', 'w', encoding='utf-8') as f:
                 _json.dump(task_data, f, ensure_ascii=False, indent=2)
         except Exception as save_err:
             logger.warning(f"A/B test result persistence failed: {save_err}")
@@ -640,7 +796,7 @@ async def ab_test(request: ABTestRequest, http_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"A/B测试异常: {e}", exc_info=True)
+        logger.error(f"A/B test failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('abtest.failed', lang, str(e))
@@ -694,9 +850,9 @@ async def ab_test_batch(request: ABTestBatchRequest, http_request: Request):
                 )
                 variant_results.append({
                     'name': variant.name,
-                    'eval_score': result.get('evaluation', {}).get('overall_score', 0),
+                    'eval_score': (result.get('evaluation') or {}).get('overall_score', 0),
                     'context_count': len(result['context']),
-                    'drift_rate': result.get('drift_analysis', {}).get('drift_rate', 0),
+                    'drift_rate': (result.get('drift_analysis') or {}).get('drift_rate', 0),
                     'trace_id': result.get('trace_id')
                 })
             all_results.append({'query': query, 'variants': variant_results})
@@ -719,13 +875,14 @@ async def ab_test_batch(request: ABTestBatchRequest, http_request: Request):
         best_recall = max(summary, key=lambda x: x['avg_context_count']) if summary else None
         best_drift = min(summary, key=lambda x: x['avg_drift_rate']) if summary else None
 
-        # Persist
+        # Persist (see the single-query handler: not under async_tasks.task_directory, whose
+        # cleanup job sweeps it)
         import json as _json
         import uuid as _uuid
         from pathlib import Path as _Path
         from datetime import datetime as _dt
-        task_dir = _Path('./storage/tasks')
-        task_dir.mkdir(parents=True, exist_ok=True)
+        result_dir = _Path(config.get('abtest.result_directory', './storage/abtest_results'))
+        result_dir.mkdir(parents=True, exist_ok=True)
         task_id = str(_uuid.uuid4())
         task_data = {
             'task_id': task_id,
@@ -741,10 +898,10 @@ async def ab_test_batch(request: ABTestBatchRequest, http_request: Request):
             'created_at': _dt.now().isoformat()
         }
         try:
-            with open(task_dir / f'{task_id}.json', 'w', encoding='utf-8') as f:
+            with open(result_dir / f'{task_id}.json', 'w', encoding='utf-8') as f:
                 _json.dump(task_data, f, ensure_ascii=False, indent=2)
         except Exception as save_err:
-            logger.warning(f"批量A/B测试结果持久化失败: {save_err}")
+            logger.warning(f"Batch A/B test result persistence failed: {save_err}")
 
         return {
             'success': True,
@@ -760,11 +917,36 @@ async def ab_test_batch(request: ABTestBatchRequest, http_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"批量A/B测试异常: {e}", exc_info=True)
+        logger.error(f"Batch A/B test failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('abtest.batch_failed', lang, str(e))
         )
+
+
+def _raw_metric(result: Dict, name: str) -> Optional[float]:
+    """Raw value of one evaluation metric, independent of the rubric's pass lines.
+
+    A/B winners used to be picked from ``overall_score`` alone, which is normalized
+    against the scenario pass lines: two variants can only be ranked by it if they were
+    scored by the same rubric *and* the same scenario. These raw metrics are what the
+    score is built from, so they survive a rubric change.
+    """
+    metric = ((result.get('evaluation') or {}).get('metrics') or {}).get(name) or {}
+    value = metric.get('value')
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _scores_comparable(results: List[Dict]) -> bool:
+    """True when every variant was scored by the same rubric and scenario."""
+    signatures = {
+        ((result.get('evaluation') or {}).get('rubric_version'),
+         (result.get('evaluation') or {}).get('scenario_id'))
+        for result in results
+    }
+    return len(signatures) <= 1
 
 
 def _compare_results(results: List[Dict]) -> Dict:
@@ -781,9 +963,16 @@ def _compare_results(results: List[Dict]) -> Dict:
         return {}
 
     comparison = {
+        # Rubric-dependent winner: only meaningful inside one scenario/rubric, which is
+        # what `score_comparable` reports.
         'best_by_evaluation': None,
+        # Rubric-independent winners, straight from the metric values.
+        'best_by_grounding': None,
+        'best_by_citation_coverage': None,
         'best_by_recall': None,
         'best_by_drift_rate': None,
+        'score_comparable': True,
+        'rubric_version': None,
         'differences': [],
         'summary': {}
     }
@@ -794,11 +983,21 @@ def _compare_results(results: List[Dict]) -> Dict:
     best_recall_count = -1
     best_drift = None
     best_drift_rate = 1.0
+    best_grounding = None
+    best_grounding_value = -1.0
+    best_citation = None
+    best_citation_value = -1.0
 
     for result in results:
-        eval_score = result.get('evaluation', {}).get('overall_score', 0)
+        # Use `or {}` to guard against dict keys that are explicitly None (a Python
+        # classic: dict.get(key, default) only returns default when the key is absent,
+        # NOT when the key exists with value None). Both evaluation and drift_analysis
+        # can legitimately be None when their upstream stages fail (e.g. LLM offline).
+        eval_score = (result.get('evaluation') or {}).get('overall_score', 0)
         recall_count = result.get('context_count', 0)
-        drift_rate = result.get('drift_analysis', {}).get('drift_rate', 1.0)
+        drift_rate = (result.get('drift_analysis') or {}).get('drift_rate', 1.0)
+        grounding = _raw_metric(result, 'answer_faithfulness')
+        citation = _raw_metric(result, 'citation_coverage')
 
         if eval_score > best_eval_score:
             best_eval_score = eval_score
@@ -809,10 +1008,24 @@ def _compare_results(results: List[Dict]) -> Dict:
         if drift_rate < best_drift_rate:
             best_drift_rate = drift_rate
             best_drift = result['name']
+        if grounding is not None and grounding > best_grounding_value:
+            best_grounding_value = grounding
+            best_grounding = result['name']
+        if citation is not None and citation > best_citation_value:
+            best_citation_value = citation
+            best_citation = result['name']
 
     comparison['best_by_evaluation'] = {
         'name': best_eval,
         'score': best_eval_score
+    }
+    comparison['best_by_grounding'] = {
+        'name': best_grounding,
+        'answer_faithfulness': best_grounding_value if best_grounding else None
+    }
+    comparison['best_by_citation_coverage'] = {
+        'name': best_citation,
+        'citation_coverage': best_citation_value if best_citation else None
     }
     comparison['best_by_recall'] = {
         'name': best_recall,
@@ -822,6 +1035,12 @@ def _compare_results(results: List[Dict]) -> Dict:
         'name': best_drift,
         'drift_rate': best_drift_rate
     }
+
+    # Flag instead of silently crowning a winner: `overall_score` is normalized against
+    # the scenario pass lines, so variants scored by different scenarios -- or by
+    # different rubric versions -- are simply not on the same scale.
+    comparison['score_comparable'] = _scores_comparable(results)
+    comparison['rubric_version'] = (results[0].get('evaluation') or {}).get('rubric_version')
 
     answer_lengths = [len(r['answer']) for r in results]
     context_counts = [r.get('context_count', 0) for r in results]
@@ -877,7 +1096,7 @@ async def get_rule_effectiveness(http_request: Request, rule_id: Optional[str] =
             'data': report
         }
     except Exception as e:
-        logger.error(f"获取规则生效率报告失败: {e}", exc_info=True)
+        logger.error(f"Failed to get rule effectiveness report: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('chat.rule_effectiveness_failed', lang, str(e))
@@ -898,7 +1117,7 @@ async def get_rule_logs(http_request: Request, rule_id: Optional[str] = None, li
             'data': logs
         }
     except Exception as e:
-        logger.error(f"获取规则应用日志失败: {e}", exc_info=True)
+        logger.error(f"Failed to get rule application logs: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('chat.rule_logs_failed', lang, str(e))
@@ -987,7 +1206,7 @@ async def get_conversation_history(request: HistoryRequest, http_request: Reques
                     'has_results': data.get('has_results', False)
                 })
             except Exception as e:
-                logger.warning(f"读取追踪文件失败: {trace_file}, {e}")
+                logger.warning(f"Failed to read trace file: {trace_file}, {e}")
                 continue
 
         total = len(filtered)
@@ -1006,7 +1225,7 @@ async def get_conversation_history(request: HistoryRequest, http_request: Reques
         }
 
     except Exception as e:
-        logger.error(f"获取对话历史失败: {e}", exc_info=True)
+        logger.error(f"Failed to get conversation history: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('chat.history_get_failed', lang, str(e))
@@ -1089,7 +1308,7 @@ async def get_conversation_stats(http_request: Request, kb_id: Optional[str] = N
         }
 
     except Exception as e:
-        logger.error(f"获取对话统计失败: {e}", exc_info=True)
+        logger.error(f"Failed to get conversation stats: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('chat.stats_get_failed', lang, str(e))
@@ -1105,7 +1324,10 @@ async def delete_conversation(trace_id: str, http_request: Request):
     try:
         from pathlib import Path
 
-        trace_file = Path('./storage/traces') / f'{trace_id}.json'
+        # trace_id comes from the URL: safe_join keeps it a single path segment so a crafted
+        # id cannot unlink a file outside the trace directory.
+        trace_dir = Path(config.get('trace.trace_directory', './storage/traces'))
+        trace_file = safe_join(trace_dir, f'{trace_id}.json')
         if not trace_file.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1113,17 +1335,17 @@ async def delete_conversation(trace_id: str, http_request: Request):
             )
 
         trace_file.unlink()
-        logger.info(f"删除对话记录: {trace_id}")
+        logger.info(f"Deleted conversation record: {trace_id}")
 
         return {
             'success': True,
-            'message': '对话记录已删除'
+            'message': _('chat.conversation_delete_success', lang)
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"删除对话记录失败: {e}", exc_info=True)
+        logger.error(f"Failed to delete conversation record: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_('chat.conversation_delete_failed', lang, str(e))

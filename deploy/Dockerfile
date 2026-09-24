@@ -1,41 +1,60 @@
 # whiteBoxRAG Dockerfile
-# 轻量化Docker镜像，适用于8G内存环境
+# Lightweight Docker image for production use
+# Dependencies managed by uv (pyproject.toml + uv.lock); no requirements.txt
 
 FROM python:3.12-slim
 
-# 设置工作目录
+# uv binary: copied from official distroless image; version matches uv.lock
+COPY --from=ghcr.io/astral-sh/uv:0.10.11 /uv /uvx /bin/
+
+# Set working directory to /app for the application
 WORKDIR /app
 
-# 安装系统依赖（PDF/Office文档处理需要）
+# uv run parameters
+#   UV_COMPILE_BYTECODE     Compile bytecode, container starts faster
+#   UV_LINK_MODE=copy       Copy hard links instead of sharing them inode
+#   UV_NO_DEV=1             No dev group installed in production image (pytest / flake8)
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_DEV=1
+
+# Install system dependencies (PDF/Office document processing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    # PDF处理依赖
+    # PDF processing dependencies
     libpoppler-cpp-dev \
-    # Office文档依赖
+    # Office document dependencies
     libreoffice \
-    # 其他工具
+    # MIME sniffing
+    # （Windows python-magic-bin  DLL,refer to pyproject.toml）
+    libmagic1 \
+    # Other tools
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY requirements.txt .
+# Copy only the dependency list first to allow reusing the cache when source code changes
+COPY pyproject.toml uv.lock ./
 
-# 安装Python依赖
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# Install uv dependencies (locked version)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked
 
-# 复制应用代码
+# Copy application code
 COPY . .
 
-# 创建存储目录
+# Put virtual environment's executables first in PATH so gunicorn / uvicorn can call them directly
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Create storage directories
 RUN mkdir -p storage/vectordb storage/documents storage/logs storage/tasks storage/monitor storage/traces
 
-# 暴露端口
+# Expose port
 EXPOSE 8080
 
-# 健康检查
+# Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# 启动命令
-# 使用gunicorn多工作进程，但限制为1个避免向量库冲突
+# Start command to run the application
+# Use gunicorn with multiple workers, but limit to 1 to avoid vector database conflicts
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "api.api:app"]
